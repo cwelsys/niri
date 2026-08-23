@@ -5,6 +5,7 @@ use std::time::Duration;
 use niri_config::{Config, ModKey};
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::renderer::gles::GlesRenderer;
+use smithay::backend::renderer::Renderer as _;
 use smithay::output::Output;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
@@ -81,6 +82,15 @@ impl Backend {
             Backend::Winit(winit) => winit.with_primary_renderer(f),
             Backend::Headless(headless) => headless.with_primary_renderer(f),
         }
+    }
+
+    /// Retire renderer textures for buffers that are already gone.
+    pub fn cleanup_texture_cache(&mut self) {
+        self.with_primary_renderer(|renderer| {
+            if let Err(err) = renderer.cleanup_texture_cache() {
+                warn!("error cleaning up the texture cache: {err:?}");
+            }
+        });
     }
 
     pub fn render(

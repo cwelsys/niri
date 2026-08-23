@@ -4766,6 +4766,17 @@ impl Niri {
             self.queue_estimated_vblank_timer(output.clone(), target_presentation_time);
         }
 
+        // We import every dmabuf as soon as the client creates a wl_buffer from it, just to check
+        // that we can, and the renderer caches that import until a render pass retires it. Since
+        // we didn't present a frame here, and for as long as monitors are off we never will, those
+        // imports would otherwise pile up and hold on to buffers the client has already dropped.
+        //
+        // This also fires when we rendered but failed to queue the frame, where the render already
+        // cleaned up and this is a no-op.
+        if res == RenderResult::Skipped {
+            backend.cleanup_texture_cache();
+        }
+
         let is_locked = self.is_locked();
         let state = self.output_state.get_mut(output).unwrap();
 
