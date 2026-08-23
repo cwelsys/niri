@@ -2464,9 +2464,9 @@ impl Niri {
             .insert_source(
                 Timer::from_duration(Duration::from_secs(1)),
                 |_, _, state| {
-                    // No-op while monitors are off: ticking smithay's frame-throttle bookkeeping
-                    // serves no purpose when nothing is being presented.
-                    if state.niri.monitors_active {
+                    // Ticking smithay's frame-throttle bookkeeping serves no purpose when
+                    // nothing is being presented. A screencast or screencopy counts.
+                    if state.niri.any_output_consumed() {
                         state.niri.send_frame_callbacks_on_fallback_timer();
                     }
                     TimeoutAction::ToDuration(Duration::from_secs(1))
@@ -3729,6 +3729,62 @@ impl Niri {
         }
     }
 
+    /// Whether anything will consume what we draw for this output.
+    ///
+    /// Screencasts and screencopy keep rendering with the CRTC torn down:
+    /// `render_for_screen_cast()`, `render_windows_for_screen_cast()` and
+    /// `render_for_screencopy_with_damage()` run at the end of `redraw()`, outside the
+    /// `monitors_active` check. Their clients still need frame callbacks, so gating on
+    /// `monitors_active` alone freezes a cast when the screen blanks.
+    pub fn output_is_consumed(&self, output: &Output) -> bool {
+        if self.monitors_active {
+            return true;
+        }
+
+        let pending_screencopy = self
+            .screencopy_state
+            .queues()
+            .filter_map(|queue| queue.pending())
+            .any(|screencopy| screencopy.output() == output);
+        if pending_screencopy {
+            return true;
+        }
+
+        #[cfg(feature = "xdp-gnome-screencast")]
+        {
+            let weak = output.downgrade();
+            let casting = self
+                .casting
+                .casts
+                .iter()
+                .filter(|cast| cast.is_active())
+                .any(|cast| match cast.target {
+                    // A window cast consumes whichever output the window is currently on.
+                    CastTarget::Window { id } => self
+                        .layout
+                        .windows_for_output(output)
+                        .any(|win| win.id().get() == id),
+                    _ => cast.target.matches_output(&weak),
+                });
+            if casting {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Whether any output is being consumed.
+    ///
+    /// For the global frame-callback throttling timer, which is not per-output.
+    pub fn any_output_consumed(&self) -> bool {
+        self.monitors_active
+            || self
+                .global_space
+                .outputs()
+                .any(|output| self.output_is_consumed(output))
+    }
+
     pub fn queue_estimated_vblank_timer(
         &mut self,
         output: Output,
@@ -4844,9 +4900,10 @@ impl Niri {
         // However, this should probably be restricted to sending frame callbacks to more surfaces,
         // to err on the safe side.
         //
-        // With monitors off, skip frame callbacks entirely. We never present anything, so inviting
-        // clients to commit just queues buffers that go nowhere.
-        if self.monitors_active {
+        // Skip frame callbacks when nothing will consume this output: inviting clients to commit
+        // just queues buffers that go nowhere. Screencasts and screencopy count as consumers, so
+        // their clients keep drawing with the monitors off.
+        if self.output_is_consumed(output) {
             self.send_frame_callbacks(output);
         }
         backend.with_primary_renderer(|renderer| {

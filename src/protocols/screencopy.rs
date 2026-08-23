@@ -111,6 +111,13 @@ impl ScreencopyQueue {
         self.credentials
     }
 
+    /// The screencopy that the next render will serve, if any.
+    ///
+    /// Read-only counterpart to [`Self::split()`].
+    pub fn pending(&self) -> Option<&Screencopy> {
+        self.screencopies.first()
+    }
+
     pub fn split(&mut self) -> (&mut OutputDamageTracker, Option<&Screencopy>) {
         let ScreencopyQueue {
             damage_tracker,
