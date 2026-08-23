@@ -1818,6 +1818,17 @@ impl Tty {
         Some(f(renderer.as_gles_renderer()))
     }
 
+    /// Drops every cached import on every device, plus the manager's copy buffers.
+    ///
+    /// Goes through the `GpuManager`, not `with_primary_renderer()`: a `MultiRenderer` built for
+    /// one node reaches only that node, a buffer that cannot be imported on the render node is
+    /// imported on its source device, and the per-node-pair copy buffers belong to no renderer.
+    pub fn invalidate_caches(&mut self) {
+        if let Err(err) = self.gpu_manager.invalidate_caches() {
+            warn!("error invalidating renderer caches: {err:?}");
+        }
+    }
+
     pub fn render(
         &mut self,
         niri: &mut Niri,

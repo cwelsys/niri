@@ -93,6 +93,24 @@ impl Backend {
         });
     }
 
+    /// Drop all cached imports, including ones whose buffer is still alive.
+    ///
+    /// Stronger than [`Self::cleanup_texture_cache()`], which only retires entries whose buffer is
+    /// already dropped. Call it only when nothing will reuse the imports: everything still in use
+    /// has to be imported again.
+    pub fn invalidate_caches(&mut self) {
+        match self {
+            Backend::Tty(tty) => tty.invalidate_caches(),
+            Backend::Winit(_) | Backend::Headless(_) => {
+                self.with_primary_renderer(|renderer| {
+                    if let Err(err) = renderer.invalidate_caches() {
+                        warn!("error invalidating renderer caches: {err:?}");
+                    }
+                });
+            }
+        }
+    }
+
     pub fn render(
         &mut self,
         niri: &mut Niri,
