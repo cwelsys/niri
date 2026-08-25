@@ -1818,6 +1818,17 @@ impl Tty {
         Some(f(renderer.as_gles_renderer()))
     }
 
+    /// Retires cached imports whose buffer is gone, on every device.
+    ///
+    /// Goes through the `GpuManager` for the same reason as [`Self::invalidate_caches()`]: a
+    /// buffer that cannot be imported on the render node is imported on its source device, and
+    /// `with_primary_renderer()` never reaches it.
+    pub fn cleanup_texture_cache(&mut self) {
+        if let Err(err) = self.gpu_manager.cleanup_texture_cache() {
+            warn!("error cleaning up the texture cache: {err:?}");
+        }
+    }
+
     /// Drops every cached import on every device, plus the manager's copy buffers.
     ///
     /// Goes through the `GpuManager`, not `with_primary_renderer()`: a `MultiRenderer` built for

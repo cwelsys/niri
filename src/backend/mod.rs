@@ -86,11 +86,16 @@ impl Backend {
 
     /// Retire renderer textures for buffers that are already gone.
     pub fn cleanup_texture_cache(&mut self) {
-        self.with_primary_renderer(|renderer| {
-            if let Err(err) = renderer.cleanup_texture_cache() {
-                warn!("error cleaning up the texture cache: {err:?}");
+        match self {
+            Backend::Tty(tty) => tty.cleanup_texture_cache(),
+            Backend::Winit(_) | Backend::Headless(_) => {
+                self.with_primary_renderer(|renderer| {
+                    if let Err(err) = renderer.cleanup_texture_cache() {
+                        warn!("error cleaning up the texture cache: {err:?}");
+                    }
+                });
             }
-        });
+        }
     }
 
     /// Drop all cached imports, including ones whose buffer is still alive.
