@@ -114,6 +114,8 @@ pub struct ResolvedWindowRules {
     /// Whether to block out this window from certain render targets.
     pub block_out_from: Option<BlockOutFrom>,
 
+    pub prefer_windowed_fullscreen: Option<bool>,
+
     /// Whether to enable VRR on this window's primary output if it is on-demand.
     pub variable_refresh_rate: Option<bool>,
 
@@ -255,6 +257,13 @@ impl ResolvedWindowRules {
                     resolved.open_fullscreen = Some(x);
                 }
 
+                if let Some(x) = rule.open_windowed_fullscreen {
+                    resolved.open_fullscreen = Some(x);
+                    if x {
+                        resolved.prefer_windowed_fullscreen = Some(true);
+                    }
+                }
+
                 if let Some(x) = rule.open_floating {
                     resolved.open_floating = Some(x);
                 }
@@ -302,6 +311,9 @@ impl ResolvedWindowRules {
                 }
                 if let Some(x) = rule.block_out_from {
                     resolved.block_out_from = Some(x);
+                }
+                if let Some(x) = rule.prefer_windowed_fullscreen {
+                    resolved.prefer_windowed_fullscreen = Some(x);
                 }
                 if let Some(x) = rule.variable_refresh_rate {
                     resolved.variable_refresh_rate = Some(x);

@@ -156,6 +156,101 @@ fn windowed_fullscreen_chain() {
 }
 
 #[test]
+fn prefer_windowed_fullscreen() {
+    let config = niri_config::Config::parse_mem(
+        "window-rule {
+            prefer-windowed-fullscreen true
+        }",
+    )
+    .unwrap();
+    let mut f = Fixture::with_config(config);
+    f.add_output(1, (1920, 1080));
+
+    let id = f.add_client();
+    let window = f.client(id).create_window();
+    let surface = window.surface.clone();
+    window.set_fullscreen(None);
+    window.commit();
+    f.roundtrip(id);
+
+    let window = f.client(id).window(&surface);
+    assert_snapshot!(
+        window.format_recent_configures(),
+        @"size: 936 × 1048, bounds: 1888 × 1048, states: [Fullscreen]"
+    );
+    window.attach_new_buffer();
+    window.set_size(936, 1048);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+
+    let get_state = |f: &mut Fixture| {
+        let mapped = f.niri().layout.windows().next().unwrap().1;
+        format!(
+            "fs {}, wfs {}",
+            mapped.sizing_mode().is_fullscreen(),
+            mapped.is_windowed_fullscreen()
+        )
+    };
+    assert_snapshot!(get_state(&mut f), @"fs false, wfs true");
+
+    let _ = f.client(id).window(&surface).recent_configures();
+    f.client(id).window(&surface).set_fullscreen(None);
+    f.double_roundtrip(id);
+    let window = f.client(id).window(&surface);
+    assert_snapshot!(
+        window.format_recent_configures(),
+        @"size: 936 × 1048, bounds: 1888 × 1048, states: [Fullscreen, Activated]"
+    );
+    window.ack_last_and_commit();
+    f.roundtrip(id);
+    assert_snapshot!(get_state(&mut f), @"fs false, wfs true");
+
+    f.client(id).window(&surface).unset_fullscreen();
+    f.double_roundtrip(id);
+    let window = f.client(id).window(&surface);
+    assert_snapshot!(
+        window.format_recent_configures(),
+        @"size: 936 × 1048, bounds: 1888 × 1048, states: [Activated]"
+    );
+    window.ack_last_and_commit();
+    f.roundtrip(id);
+    assert_snapshot!(get_state(&mut f), @"fs false, wfs false");
+}
+
+#[test]
+fn open_windowed_fullscreen() {
+    let config = niri_config::Config::parse_mem(
+        "window-rule {
+            open-windowed-fullscreen true
+        }",
+    )
+    .unwrap();
+    let mut f = Fixture::with_config(config);
+    f.add_output(1, (1920, 1080));
+
+    let id = f.add_client();
+    let window = f.client(id).create_window();
+    let surface = window.surface.clone();
+    window.commit();
+    f.roundtrip(id);
+
+    let window = f.client(id).window(&surface);
+    assert_snapshot!(
+        window.format_recent_configures(),
+        @"size: 936 × 1048, bounds: 1888 × 1048, states: [Fullscreen]"
+    );
+    window.attach_new_buffer();
+    window.set_size(936, 1048);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+
+    let mapped = f.niri().layout.windows().next().unwrap().1;
+    assert!(!mapped.sizing_mode().is_fullscreen());
+    assert!(mapped.is_windowed_fullscreen());
+    assert_eq!(mapped.rules().prefer_windowed_fullscreen, Some(true));
+}
+
+#[test]
 fn unfullscreen_before_fullscreen_ack_doesnt_prevent_view_offset_save_restore() {
     let (mut f, id, _surface) = set_up();
 

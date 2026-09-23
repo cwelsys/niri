@@ -3570,6 +3570,12 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn toggle_windowed_fullscreen(&mut self, id: &W::Id) {
         let (_, window) = self.windows().find(|(_, win)| win.id() == id).unwrap();
+        let value = !window.is_pending_windowed_fullscreen();
+        self.set_windowed_fullscreen(id, value);
+    }
+
+    pub fn set_windowed_fullscreen(&mut self, id: &W::Id, value: bool) {
+        let (_, window) = self.windows().find(|(_, win)| win.id() == id).unwrap();
         if window.pending_sizing_mode().is_fullscreen() {
             // Remove the real fullscreen.
             for ws in self.workspaces_mut() {
@@ -3583,7 +3589,7 @@ impl<W: LayoutElement> Layout<W> {
         // This will switch is_pending_fullscreen() to false right away.
         self.with_windows_mut(|window, _| {
             if window.id() == id {
-                window.request_windowed_fullscreen(!window.is_pending_windowed_fullscreen());
+                window.request_windowed_fullscreen(value);
             }
         });
     }

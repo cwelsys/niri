@@ -39,7 +39,7 @@ use tracing::field::Empty;
 use crate::input::move_grab::MoveGrab;
 use crate::input::resize_grab::ResizeGrab;
 use crate::input::{AnyStartData, DOUBLE_CLICK_TIME};
-use crate::layout::ActivateWindow;
+use crate::layout::{ActivateWindow, LayoutElement};
 use crate::niri::{CastTarget, PopupGrabState, State};
 use crate::utils::transaction::Transaction;
 use crate::utils::{
@@ -681,6 +681,8 @@ impl XdgShellHandler for State {
             mapped.set_needs_configure();
 
             let window = mapped.window.clone();
+            let prefer_windowed = mapped.rules().prefer_windowed_fullscreen == Some(true)
+                && !mapped.pending_sizing_mode().is_fullscreen();
 
             if let Some(requested_output) = requested_output {
                 if Some(&requested_output) != current_output {
@@ -693,7 +695,11 @@ impl XdgShellHandler for State {
                 }
             }
 
-            self.niri.layout.set_fullscreen(&window, true);
+            if prefer_windowed {
+                self.niri.layout.set_windowed_fullscreen(&window, true);
+            } else {
+                self.niri.layout.set_fullscreen(&window, true);
+            }
         } else if let Some(unmapped) = self.niri.unmapped_windows.get_mut(toplevel.wl_surface()) {
             match &mut unmapped.state {
                 InitialConfigureState::NotConfigured {
@@ -743,7 +749,9 @@ impl XdgShellHandler for State {
                             state.states.set(xdg_toplevel::State::Fullscreen);
                             state.states.unset(xdg_toplevel::State::Maximized);
                         });
-                        ws.configure_new_window(&unmapped.window, None, None, false, rules);
+                        if rules.prefer_windowed_fullscreen != Some(true) {
+                            ws.configure_new_window(&unmapped.window, None, None, false, rules);
+                        }
                     }
 
                     // We already sent the initial configure, so we need to reconfigure.
@@ -1179,9 +1187,12 @@ impl State {
             is_pending_maximized = (*wants_maximized && rules.open_maximized_to_edges.is_none())
                 || rules.open_maximized_to_edges == Some(true);
 
-            if (wants_fullscreen.is_some() && rules.open_fullscreen.is_none())
-                || rules.open_fullscreen == Some(true)
-            {
+            let open_fullscreen = (wants_fullscreen.is_some() && rules.open_fullscreen.is_none())
+                || rules.open_fullscreen == Some(true);
+            let open_windowed_fullscreen =
+                open_fullscreen && rules.prefer_windowed_fullscreen == Some(true);
+
+            if open_fullscreen && !open_windowed_fullscreen {
                 toplevel.with_pending_state(|state| {
                     state.states.set(xdg_toplevel::State::Fullscreen);
                 });
@@ -1211,6 +1222,13 @@ impl State {
                 is_floating,
                 &rules,
             );
+
+            if open_windowed_fullscreen {
+                toplevel.with_pending_state(|state| {
+                    state.states.set(xdg_toplevel::State::Fullscreen);
+                    state.states.unset(xdg_toplevel::State::Maximized);
+                });
+            }
         }
 
         // Set the tiled state for the initial configure.

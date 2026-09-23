@@ -46,6 +46,7 @@ window-rule {
     open-maximized true
     open-maximized-to-edges true
     open-fullscreen true
+    open-windowed-fullscreen true
     open-floating true
     open-focused false
 
@@ -54,6 +55,7 @@ window-rule {
     opacity 0.5
     block-out-from "screencast"
     // block-out-from "screen-capture"
+    prefer-windowed-fullscreen true
     variable-refresh-rate true
     default-column-display "tabbed"
     default-floating-position x=100 y=200 relative-to="bottom-left"
@@ -645,6 +647,30 @@ window-rule {
     match is-active=false
 
     opacity 0.95
+}
+```
+
+#### `prefer-windowed-fullscreen`
+
+Turn fullscreen into [windowed fullscreen](./Fullscreen-and-Maximize.md#windowed-fullscreen) for this window.
+The window is told that it is fullscreen, but it keeps its tile size.
+
+This applies to fullscreen requests from the window, both before and after it opens, and to `open-fullscreen true`.
+The `fullscreen-window` action still makes the window truly fullscreen.
+
+`open-windowed-fullscreen true` opens the window in windowed fullscreen and also turns this on.
+
+```kdl
+window-rule {
+    match app-id=r#"^steam_app_"#
+
+    prefer-windowed-fullscreen true
+}
+
+window-rule {
+    match app-id="^vesktop$"
+
+    open-windowed-fullscreen true
 }
 ```
 

@@ -310,6 +310,11 @@ impl Mapped {
             focus_timestamp: None,
         };
 
+        if rv.rules.prefer_windowed_fullscreen == Some(true) {
+            rv.is_windowed_fullscreen = rv.sizing_mode().is_fullscreen();
+            rv.is_pending_windowed_fullscreen = rv.pending_sizing_mode().is_fullscreen();
+        }
+
         rv.is_maximized = rv.sizing_mode().is_maximized();
         rv.is_pending_maximized = rv.pending_sizing_mode().is_maximized();
 
