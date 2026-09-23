@@ -891,3 +891,40 @@ post-map configures:
     let _guard = settings.bind_to_scope();
     assert_snapshot!(snapshot);
 }
+
+#[test]
+fn always_center_single_column_left_aligns_columns_that_fit() {
+    let config = Config::parse_mem(
+        "layout {
+            always-center-single-column
+            default-column-width { fixed 500; }
+        }",
+    )
+    .unwrap();
+    let mut f = Fixture::with_config(config);
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let view_pos = |f: &mut Fixture| {
+        f.niri_complete_animations();
+        f.niri()
+            .layout
+            .active_workspace()
+            .unwrap()
+            .scrolling()
+            .view_pos()
+    };
+
+    for _ in 0..2 {
+        let window = f.client(id).create_window();
+        let surface = window.surface.clone();
+        window.commit();
+        f.roundtrip(id);
+        let window = f.client(id).window(&surface);
+        window.attach_new_buffer();
+        window.set_size(500, 100);
+        window.ack_last_and_commit();
+        f.double_roundtrip(id);
+    }
+    assert_snapshot!(view_pos(&mut f), @"-16");
+}

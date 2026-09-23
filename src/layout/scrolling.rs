@@ -594,6 +594,16 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             (self.working_area, self.options.layout.gaps)
         };
 
+        if self.options.layout.always_center_single_column
+            && self.columns.len() > 1
+            && !mode.is_maximized()
+        {
+            let content_w = self.column_x(self.columns.len()) - padding;
+            if content_w + padding * 2. <= area.size.w {
+                return -col_x - padding - area.loc.x;
+            }
+        }
+
         let target_x = target_x.unwrap_or_else(|| self.target_view_pos());
 
         let new_offset =
