@@ -435,6 +435,9 @@ pub struct Niri {
 
     #[cfg(feature = "xdp-gnome-screencast")]
     pub casting: Screencasting,
+
+    #[cfg(test)]
+    pub test_action_count: usize,
 }
 
 smithay::delegate_dispatch2!(State);
@@ -2780,6 +2783,9 @@ impl Niri {
 
             #[cfg(feature = "xdp-gnome-screencast")]
             casting: screencasting,
+
+            #[cfg(test)]
+            test_action_count: 0,
         };
 
         niri.reset_pointer_inactivity_timer();
