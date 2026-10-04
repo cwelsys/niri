@@ -185,6 +185,13 @@ impl<'a> WindowRef<'a> {
             WindowRef::Mapped(mapped) => mapped.is_window_cast_target(),
         }
     }
+
+    pub fn is_first_of_app(self) -> bool {
+        match self {
+            WindowRef::Unmapped(unmapped) => unmapped.is_first_of_app,
+            WindowRef::Mapped(mapped) => mapped.is_first_of_app,
+        }
+    }
 }
 
 impl ResolvedWindowRules {
@@ -466,6 +473,12 @@ fn window_matches(window: WindowRef, role: &XdgToplevelSurfaceRoleAttributes, m:
 
     if let Some(is_window_cast_target) = m.is_window_cast_target {
         if window.is_window_cast_target() != is_window_cast_target {
+            return false;
+        }
+    }
+
+    if let Some(is_first_of_app) = m.is_first_of_app {
+        if window.is_first_of_app() != is_first_of_app {
             return false;
         }
     }

@@ -37,6 +37,7 @@ window-rule {
     match is-window-cast-target=true
     match is-urgent=true
     match at-startup=true
+    match is-first-of-app=true
 
     // Properties that apply once upon window opening.
     default-column-width { proportion 0.75; }
@@ -338,6 +339,26 @@ This is useful for properties like `open-on-output` which you may want to apply 
 window-rule {
     match at-startup=true
     open-on-output "HDMI-A-1"
+}
+```
+
+#### `is-first-of-app`
+
+Can be `true` or `false`.
+Matches a window that opened while no other window with the same app ID was open.
+
+This is useful for apps whose main window and secondary windows cannot be told apart by app ID or title when they open.
+
+```kdl
+// Float all windows of the browser except the first one.
+window-rule {
+    match app-id="^firefox$"
+    open-floating true
+}
+
+window-rule {
+    match app-id="^firefox$" is-first-of-app=true
+    open-floating false
 }
 ```
 

@@ -1829,3 +1829,68 @@ fn floating_memory_remember_all_at_exit() {
     open_remembered_window(&mut f, id2, &surface2);
     assert!(only_window_is_floating(&mut f));
 }
+
+#[test]
+fn is_first_of_app_matcher() {
+    let config = r##"
+window-rule {
+    match app-id="^browser$"
+    open-floating true
+}
+
+window-rule {
+    match app-id="^browser$" is-first-of-app=true
+    open-floating false
+}
+"##;
+    let config = Config::parse_mem(config).unwrap();
+    let mut f = Fixture::with_config(config);
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    // Opens a 300×200 window with the given app ID.
+    let open = |f: &mut Fixture, app_id: &str| {
+        let surface = f.client(id).create_window().surface.clone();
+        let window = f.client(id).window(&surface);
+        window.set_app_id(app_id);
+        window.commit();
+        f.roundtrip(id);
+
+        let window = f.client(id).window(&surface);
+        window.attach_new_buffer();
+        window.set_size(300, 200);
+        window.ack_last_and_commit();
+        f.double_roundtrip(id);
+        surface
+    };
+    // Returns whether each window is floating, in the order they were opened.
+    let floating = |f: &mut Fixture| -> Vec<bool> {
+        let ws = f.niri().layout.active_workspace().unwrap();
+        let mut rv: Vec<_> = ws
+            .windows()
+            .map(|mapped| (mapped.id().get(), ws.is_floating(&mapped.window)))
+            .collect();
+        rv.sort();
+        rv.into_iter().map(|(_, floating)| floating).collect()
+    };
+
+    // The first browser window should open tiled.
+    let main = open(&mut f, "browser");
+    assert_eq!(floating(&mut f), [false]);
+
+    // A window of another app doesn't count, so the second browser window should open floating.
+    let _other = open(&mut f, "other");
+    let popup = open(&mut f, "browser");
+    assert_eq!(floating(&mut f), [false, false, true]);
+
+    // Close the first browser window. Another one is still open, so a new one should open floating.
+    close_window(&mut f, id, &main);
+    let second_popup = open(&mut f, "browser");
+    assert_eq!(floating(&mut f), [false, true, true]);
+
+    // Close all browser windows. The next one is the first again and should open tiled.
+    close_window(&mut f, id, &popup);
+    close_window(&mut f, id, &second_popup);
+    let _new_main = open(&mut f, "browser");
+    assert_eq!(floating(&mut f), [false, false]);
+}

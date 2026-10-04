@@ -85,6 +85,7 @@ impl CompositorHandler for State {
                         window,
                         state,
                         activation_token_data,
+                        is_first_of_app,
                     } = entry.remove();
 
                     window.on_commit();
@@ -203,6 +204,7 @@ impl CompositorHandler for State {
                     };
                     mapped.floating_memory_key = floating_memory_key.clone();
                     mapped.opened_floating = is_floating;
+                    mapped.is_first_of_app = is_first_of_app;
                     let window = mapped.window.clone();
 
                     let target = if let Some(p) = &parent {

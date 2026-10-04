@@ -7261,6 +7261,7 @@ impl Niri {
             let window_rules = &self.config.borrow().window_rules;
 
             for unmapped in self.unmapped_windows.values_mut() {
+                unmapped.update_is_first_of_app(&self.layout);
                 let new_rules = ResolvedWindowRules::compute(
                     window_rules,
                     WindowRef::Unmapped(unmapped),

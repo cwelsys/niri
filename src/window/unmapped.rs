@@ -4,7 +4,9 @@ use smithay::output::Output;
 use smithay::wayland::shell::xdg::ToplevelSurface;
 use smithay::wayland::xdg_activation::XdgActivationTokenData;
 
-use super::ResolvedWindowRules;
+use super::{Mapped, ResolvedWindowRules};
+use crate::layout::Layout;
+use crate::utils::with_toplevel_role;
 
 #[derive(Debug)]
 pub struct Unmapped {
@@ -12,6 +14,8 @@ pub struct Unmapped {
     pub state: InitialConfigureState,
     /// Activation token, if one was used on this unmapped window.
     pub activation_token_data: Option<XdgActivationTokenData>,
+    /// Whether no other window with the same app ID was open when this one was last checked.
+    pub is_first_of_app: bool,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -87,7 +91,16 @@ impl Unmapped {
                 wants_maximized: false,
             },
             activation_token_data: None,
+            is_first_of_app: false,
         }
+    }
+
+    pub fn update_is_first_of_app(&mut self, layout: &Layout<Mapped>) {
+        let toplevel = self.window.toplevel().expect("no X11 support");
+        let app_id = with_toplevel_role(toplevel, |role| role.app_id.clone());
+        self.is_first_of_app = !layout
+            .windows()
+            .any(|(_, mapped)| with_toplevel_role(mapped.toplevel(), |role| role.app_id == app_id));
     }
 
     pub fn needs_initial_configure(&self) -> bool {

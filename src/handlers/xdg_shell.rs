@@ -1096,6 +1096,7 @@ impl State {
             return;
         };
 
+        unmapped.update_is_first_of_app(&self.niri.layout);
         let config = self.niri.config.borrow();
         let rules = ResolvedWindowRules::compute(
             &config.window_rules,
@@ -1465,6 +1466,7 @@ impl State {
         let window_rules = &config.window_rules;
 
         if let Some(unmapped) = self.niri.unmapped_windows.get_mut(toplevel.wl_surface()) {
+            unmapped.update_is_first_of_app(&self.niri.layout);
             let new_rules = ResolvedWindowRules::compute(
                 window_rules,
                 WindowRef::Unmapped(unmapped),

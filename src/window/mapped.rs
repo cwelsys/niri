@@ -53,6 +53,7 @@ pub struct Mapped {
 
     pub floating_memory_key: Option<(String, String)>,
     pub opened_floating: bool,
+    pub is_first_of_app: bool,
 
     /// Unique ID of this `Mapped`.
     id: MappedId,
@@ -282,6 +283,7 @@ impl Mapped {
             window,
             floating_memory_key: None,
             opened_floating: false,
+            is_first_of_app: false,
             id: MappedId::next(),
             credentials,
             pre_commit_hook: hook,
