@@ -1428,7 +1428,8 @@ impl<W: LayoutElement> Workspace<W> {
             .unwrap();
 
         if self.floating.has_window(&id) {
-            let removed = self.floating.remove_tile(&id);
+            let mut removed = self.floating.remove_tile(&id);
+            removed.tile.restore_to_floating = false;
             // FIXME: compute closest pos?
             self.scrolling.add_tile(
                 None,

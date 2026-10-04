@@ -148,7 +148,7 @@ impl CompositorHandler for State {
                     // The GTK about dialog sets min/max size after the initial configure but
                     // before mapping, so we need to compute open_floating at the last possible
                     // moment, that is here.
-                    let is_floating = rules.compute_open_floating(toplevel);
+                    let is_floating = self.niri.floating_memory.open_floating(&rules, toplevel);
 
                     // Figure out if we should activate the window.
                     let activate = rules.open_focused.map(|focus| {
@@ -202,6 +202,7 @@ impl CompositorHandler for State {
                         Mapped::new(window, rules, hook, &config)
                     };
                     mapped.floating_memory_key = floating_memory_key.clone();
+                    mapped.opened_floating = is_floating;
                     let window = mapped.window.clone();
 
                     let target = if let Some(p) = &parent {

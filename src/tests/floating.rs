@@ -1490,3 +1490,342 @@ window-rule {
     });
     assert_eq!(pos, Some((10., 20.)));
 }
+
+// Opens a 300×200 window that always has the same app ID and title.
+fn open_remembered_window(f: &mut Fixture, id: ClientId, surface: &WlSurface) {
+    let window = f.client(id).window(surface);
+    window.set_app_id("remembered");
+    window.set_title("main");
+    window.commit();
+    f.roundtrip(id);
+
+    let window = f.client(id).window(surface);
+    window.attach_new_buffer();
+    window.set_size(300, 200);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+}
+
+fn close_window(f: &mut Fixture, id: ClientId, surface: &WlSurface) {
+    let window = f.client(id).window(surface);
+    window.attach_null();
+    window.commit();
+    f.double_roundtrip(id);
+}
+
+fn only_window_is_floating(f: &mut Fixture) -> bool {
+    let ws = f.niri().layout.active_workspace().unwrap();
+    let mapped = ws.windows().next().unwrap();
+    ws.is_floating(&mapped.window)
+}
+
+fn only_window(f: &mut Fixture) -> smithay::desktop::Window {
+    let ws = f.niri().layout.active_workspace().unwrap();
+    ws.windows().next().unwrap().window.clone()
+}
+
+// Sets up a fixture with one output and the remembered window open.
+fn fresh() -> (Fixture, ClientId, WlSurface) {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let surface = f.client(id).create_window().surface.clone();
+    open_remembered_window(&mut f, id, &surface);
+    (f, id, surface)
+}
+
+// Starts an interactive move and drags the window past the start threshold, without ending it.
+fn start_drag(f: &mut Fixture, window: &smithay::desktop::Window) {
+    let from = (100., 100.);
+    let to = (400., 400.);
+    let output = f.niri_output(1);
+    assert!(f
+        .niri()
+        .layout
+        .interactive_move_begin(window.clone(), &output, Point::from(from)));
+    f.niri().layout.interactive_move_update(
+        window,
+        Point::from((to.0 - from.0, to.1 - from.1)),
+        output,
+        Point::from(to),
+    );
+}
+
+#[test]
+fn floating_state_remembered_across_reopen() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+
+    let id = f.add_client();
+    let surface = f.client(id).create_window().surface.clone();
+
+    // With nothing remembered the window should open tiled.
+    open_remembered_window(&mut f, id, &surface);
+    assert!(!only_window_is_floating(&mut f));
+
+    // Reopen it without toggling anything. It should still open tiled.
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(!only_window_is_floating(&mut f));
+
+    // Toggle to floating and reopen. It should open floating.
+    f.niri().layout.toggle_window_floating(None);
+    f.double_roundtrip(id);
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(only_window_is_floating(&mut f));
+
+    // Reopen it again. It should keep opening floating.
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(only_window_is_floating(&mut f));
+
+    // Toggle back to tiling and reopen. It should open tiled.
+    f.niri().layout.toggle_window_floating(None);
+    f.double_roundtrip(id);
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(!only_window_is_floating(&mut f));
+}
+
+#[test]
+fn open_floating_rule_wins_over_remembered_floating_state() {
+    let config = r##"
+window-rule {
+    open-floating false
+}
+"##;
+    let config = Config::parse_mem(config).unwrap();
+    let mut f = Fixture::with_config(config);
+    f.add_output(1, (1920, 1080));
+
+    let id = f.add_client();
+    let surface = f.client(id).create_window().surface.clone();
+
+    // Open the window and toggle it to floating.
+    open_remembered_window(&mut f, id, &surface);
+    f.niri().layout.toggle_window_floating(None);
+    f.double_roundtrip(id);
+    assert!(only_window_is_floating(&mut f));
+
+    // Reopen it. The window rule should win over the remembered floating state.
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(!only_window_is_floating(&mut f));
+}
+
+#[test]
+fn floating_memory_closed_while_fullscreen() {
+    let (mut f, id, surface) = fresh();
+
+    // Toggle to floating.
+    f.niri().layout.toggle_window_floating(None);
+    f.double_roundtrip(id);
+
+    // Fullscreen the window and commit in response.
+    let w = only_window(&mut f);
+    f.niri().layout.set_fullscreen(&w, true);
+    f.double_roundtrip(id);
+    f.client(id).window(&surface).ack_last_and_commit();
+    f.double_roundtrip(id);
+
+    // Close it while fullscreen and reopen. It should open floating.
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(only_window_is_floating(&mut f));
+}
+
+#[test]
+fn floating_memory_closed_while_maximized() {
+    let (mut f, id, surface) = fresh();
+
+    // Toggle to floating.
+    f.niri().layout.toggle_window_floating(None);
+    f.double_roundtrip(id);
+
+    // Maximize the window and commit in response.
+    let w = only_window(&mut f);
+    f.niri().layout.set_maximized(&w, true);
+    f.double_roundtrip(id);
+    f.client(id).window(&surface).ack_last_and_commit();
+    f.double_roundtrip(id);
+
+    // Close it while maximized and reopen. It should open floating.
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(only_window_is_floating(&mut f));
+}
+
+#[test]
+fn floating_memory_remembered_floating_closed_while_fullscreen() {
+    let (mut f, id, surface) = fresh();
+
+    // Toggle to floating and reopen, so that the window opens floating from memory.
+    f.niri().layout.toggle_window_floating(None);
+    f.double_roundtrip(id);
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(only_window_is_floating(&mut f));
+
+    // Fullscreen it, then close and reopen. It should still open floating.
+    let w = only_window(&mut f);
+    f.niri().layout.set_fullscreen(&w, true);
+    f.double_roundtrip(id);
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(only_window_is_floating(&mut f));
+}
+
+#[test]
+fn floating_memory_floating_closed_mid_drag() {
+    let (mut f, id, surface) = fresh();
+
+    // Toggle to floating and reopen, so that the window opens floating from memory.
+    f.niri().layout.toggle_window_floating(None);
+    f.double_roundtrip(id);
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(only_window_is_floating(&mut f));
+
+    // Start dragging it, then close it mid-drag and reopen. It should still open floating.
+    let w = only_window(&mut f);
+    start_drag(&mut f, &w);
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(only_window_is_floating(&mut f));
+}
+
+#[test]
+fn floating_memory_tiled_closed_mid_drag() {
+    let (mut f, id, surface) = fresh();
+
+    // Start dragging the tiled window.
+    let w = only_window(&mut f);
+    start_drag(&mut f, &w);
+
+    // Close it mid-drag and reopen. The drag alone shouldn't make it open floating.
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(!only_window_is_floating(&mut f));
+}
+
+#[test]
+fn floating_memory_toggled_during_drag() {
+    let (mut f, id, surface) = fresh();
+
+    // Start dragging the tiled window.
+    let w = only_window(&mut f);
+    start_drag(&mut f, &w);
+
+    // Toggle it to floating mid-drag, then drop it.
+    f.niri().layout.toggle_window_floating(None);
+    f.niri().layout.interactive_move_end(&w);
+    f.double_roundtrip(id);
+    assert!(only_window_is_floating(&mut f));
+
+    // Reopen it. It should open floating.
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(only_window_is_floating(&mut f));
+}
+
+#[test]
+fn floating_memory_toggled_during_drag_closed_mid_drag() {
+    let (mut f, id, surface) = fresh();
+
+    // Start dragging the tiled window.
+    let w = only_window(&mut f);
+    start_drag(&mut f, &w);
+
+    // Toggle it to floating and close it without ending the drag.
+    f.niri().layout.toggle_window_floating(None);
+    close_window(&mut f, id, &surface);
+
+    // It should reopen floating.
+    open_remembered_window(&mut f, id, &surface);
+    assert!(only_window_is_floating(&mut f));
+}
+
+#[test]
+fn floating_memory_title_changed_after_open() {
+    let (mut f, id, surface) = fresh();
+
+    // Change the title after the window has opened.
+    let window = f.client(id).window(&surface);
+    window.set_title("something else entirely");
+    window.commit();
+    f.double_roundtrip(id);
+
+    // Toggle to floating.
+    f.niri().layout.toggle_window_floating(None);
+    f.double_roundtrip(id);
+
+    // Reopen it. It's remembered under the title it opened with, so it should open floating.
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(only_window_is_floating(&mut f));
+}
+
+#[test]
+fn floating_memory_fullscreen_then_tiled_is_remembered_tiled() {
+    let (mut f, id, surface) = fresh();
+
+    // Toggle to floating and reopen, so that the window opens floating from memory.
+    f.niri().layout.toggle_window_floating(None);
+    f.double_roundtrip(id);
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(only_window_is_floating(&mut f));
+
+    // Fullscreen and unfullscreen it. It should return to floating.
+    let w = only_window(&mut f);
+    f.niri().layout.set_fullscreen(&w, true);
+    f.double_roundtrip(id);
+    f.niri().layout.set_fullscreen(&w, false);
+    f.double_roundtrip(id);
+    assert!(only_window_is_floating(&mut f));
+
+    // Toggle to tiling.
+    f.niri().layout.toggle_window_floating(None);
+    f.double_roundtrip(id);
+    assert!(!only_window_is_floating(&mut f));
+
+    // Reopen it. It should open tiled.
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(!only_window_is_floating(&mut f));
+}
+
+#[test]
+fn floating_memory_tiled_fullscreen_stays_tiled() {
+    let (mut f, id, surface) = fresh();
+
+    // Fullscreen the tiled window.
+    let w = only_window(&mut f);
+    f.niri().layout.set_fullscreen(&w, true);
+    f.double_roundtrip(id);
+
+    // Close it while fullscreen and reopen. It should open tiled.
+    close_window(&mut f, id, &surface);
+    open_remembered_window(&mut f, id, &surface);
+    assert!(!only_window_is_floating(&mut f));
+}
+
+#[test]
+fn floating_memory_remember_all_at_exit() {
+    let (mut f, id, _surface) = fresh();
+
+    // Toggle to floating.
+    f.niri().layout.toggle_window_floating(None);
+    f.double_roundtrip(id);
+
+    // Remember all windows without closing them, like niri does on exit.
+    let niri = f.niri();
+    niri.floating_memory.remember_all(&mut niri.layout);
+
+    // Open the same window from a new client. It should open floating.
+    let id2 = f.add_client();
+    let surface2 = f.client(id2).create_window().surface.clone();
+    open_remembered_window(&mut f, id2, &surface2);
+    assert!(only_window_is_floating(&mut f));
+}

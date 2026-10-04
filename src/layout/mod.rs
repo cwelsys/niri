@@ -511,6 +511,10 @@ impl<W: LayoutElement> RemovedTile<W> {
         self.tile.window()
     }
 
+    pub fn is_floating(&self) -> bool {
+        self.is_floating || self.tile.restore_to_floating
+    }
+
     pub fn floating_geometry(&self) -> Option<(Point<f64, SizeFrac>, Size<i32, Logical>)> {
         if !self.is_floating {
             return None;
@@ -1199,7 +1203,7 @@ impl<W: LayoutElement> Layout<W> {
                             tile: move_.tile,
                             width: move_.width,
                             is_full_width: move_.is_full_width,
-                            is_floating: false,
+                            is_floating: move_.is_floating,
                         });
                     }
                 }

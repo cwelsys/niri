@@ -52,6 +52,7 @@ pub struct Mapped {
     pub window: Window,
 
     pub floating_memory_key: Option<(String, String)>,
+    pub opened_floating: bool,
 
     /// Unique ID of this `Mapped`.
     id: MappedId,
@@ -280,6 +281,7 @@ impl Mapped {
         let mut rv = Self {
             window,
             floating_memory_key: None,
+            opened_floating: false,
             id: MappedId::next(),
             credentials,
             pre_commit_hook: hook,
