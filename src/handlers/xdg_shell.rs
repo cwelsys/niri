@@ -36,6 +36,7 @@ use smithay::wayland::shell::xdg::{
 use smithay::wayland::xdg_foreign::{XdgForeignHandler, XdgForeignState};
 use tracing::field::Empty;
 
+use crate::floating_memory::FloatingMemory;
 use crate::input::move_grab::MoveGrab;
 use crate::input::resize_grab::ResizeGrab;
 use crate::input::{AnyStartData, DOUBLE_CLICK_TIME};
@@ -925,7 +926,10 @@ impl XdgShellHandler for State {
         let was_active = active_window == Some(&window);
 
         self.niri.window_mru_ui.remove_window(id);
-        self.niri.layout.remove_window(&window, transaction.clone());
+        let removed = self.niri.layout.remove_window(&window, transaction.clone());
+        if let Some(removed) = &removed {
+            self.niri.floating_memory.remember(removed, None);
+        }
 
         let surface = surface.wl_surface();
         // This check is necessary because implicit resource destruction is done with
@@ -1206,6 +1210,14 @@ impl State {
             floating_width = ws.resolve_default_width(rules.default_width, true);
             height = ws.resolve_default_height(rules.default_height, false);
             floating_height = ws.resolve_default_height(rules.default_height, true);
+
+            let remembered = FloatingMemory::key(toplevel)
+                .filter(|_| is_floating)
+                .and_then(|key| self.niri.floating_memory.get(&key));
+            if let Some(geometry) = remembered {
+                floating_width = floating_width.or(Some(PresetSize::Fixed(geometry.size.0)));
+                floating_height = floating_height.or(Some(PresetSize::Fixed(geometry.size.1)));
+            }
 
             let configure_width = if is_floating {
                 floating_width

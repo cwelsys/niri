@@ -18,6 +18,7 @@ use directories::ProjectDirs;
 use niri::cli::{Cli, CompletionShell, Sub};
 #[cfg(feature = "dbus")]
 use niri::dbus;
+use niri::floating_memory::FloatingMemory;
 use niri::ipc::client::handle_msg;
 use niri::niri::State;
 use niri::utils::spawning::{
@@ -194,6 +195,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .unwrap();
 
+    if cli.session {
+        if let Some(dirs) = ProjectDirs::from("", "", "niri") {
+            if let Some(dir) = dirs.state_dir() {
+                state.niri.floating_memory = FloatingMemory::load(dir.join("floating-memory.json"));
+            }
+        }
+    }
+
     // Set WAYLAND_DISPLAY for children.
     let socket_name = state.niri.socket_name.as_deref().unwrap();
     env::set_var("WAYLAND_DISPLAY", socket_name);
@@ -278,6 +287,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     event_loop
         .run(None, &mut state, |state| state.refresh_and_flush_clients())
         .unwrap();
+
+    let niri = &mut state.niri;
+    niri.floating_memory.remember_all(&mut niri.layout);
 
     Ok(())
 }

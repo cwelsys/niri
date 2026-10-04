@@ -506,6 +506,20 @@ pub struct RemovedTile<W: LayoutElement> {
     is_floating: bool,
 }
 
+impl<W: LayoutElement> RemovedTile<W> {
+    pub fn window(&self) -> &W {
+        self.tile.window()
+    }
+
+    pub fn floating_geometry(&self) -> Option<(Point<f64, SizeFrac>, Size<i32, Logical>)> {
+        if !self.is_floating {
+            return None;
+        }
+
+        Some((self.tile.floating_pos?, self.tile.floating_window_size?))
+    }
+}
+
 /// Whether to activate a newly added window.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ActivateWindow {

@@ -133,6 +133,7 @@ use crate::dbus::freedesktop_login1::Login1ToNiri;
 use crate::dbus::gnome_shell_introspect::{self, IntrospectToNiri, NiriToIntrospect};
 #[cfg(feature = "dbus")]
 use crate::dbus::gnome_shell_screenshot::{NiriToScreenshot, ScreenshotToNiri};
+use crate::floating_memory::FloatingMemory;
 use crate::frame_clock::FrameClock;
 use crate::handlers::image_copy_capture::{
     self as image_copy_capture_impl, CaptureBuffer, ImageCopyCursorSession, ImageCopySession,
@@ -440,6 +441,7 @@ pub struct Niri {
     pub exit_confirm_dialog: ExitConfirmDialog,
 
     pub window_mru_ui: WindowMruUi,
+    pub floating_memory: FloatingMemory,
     pub pending_mru_commit: Option<PendingMruCommit>,
 
     pub pick_window: Option<async_channel::Sender<Option<MappedId>>>,
@@ -2889,6 +2891,7 @@ impl Niri {
             exit_confirm_dialog,
 
             window_mru_ui,
+            floating_memory: FloatingMemory::default(),
             pending_mru_commit: None,
 
             pick_window: None,

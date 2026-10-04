@@ -51,6 +51,8 @@ use crate::utils::{
 pub struct Mapped {
     pub window: Window,
 
+    pub floating_memory_key: Option<(String, String)>,
+
     /// Unique ID of this `Mapped`.
     id: MappedId,
 
@@ -277,6 +279,7 @@ impl Mapped {
         let credentials = get_credentials_for_surface(&surface);
         let mut rv = Self {
             window,
+            floating_memory_key: None,
             id: MappedId::next(),
             credentials,
             pre_commit_hook: hook,

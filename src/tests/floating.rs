@@ -1364,3 +1364,129 @@ fn repeated_size_request() {
         @""
     );
 }
+
+#[test]
+fn floating_position_and_size_remembered_across_reopen() {
+    let config = r##"
+window-rule {
+    open-floating true
+}
+"##;
+    let config = Config::parse_mem(config).unwrap();
+    let mut f = Fixture::with_config(config);
+    f.add_output(1, (1920, 1080));
+
+    let id = f.add_client();
+    let window = f.client(id).create_window();
+    let surface = window.surface.clone();
+    window.set_app_id("remembered");
+    window.set_title("main");
+    window.commit();
+    f.roundtrip(id);
+
+    let window = f.client(id).window(&surface);
+    window.attach_new_buffer();
+    window.set_size(300, 200);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+
+    f.niri().layout.move_floating_window(
+        None,
+        niri_ipc::PositionChange::SetFixed(500.),
+        niri_ipc::PositionChange::SetFixed(400.),
+        false,
+    );
+
+    let window = f.client(id).window(&surface);
+    window.attach_null();
+    window.commit();
+    f.double_roundtrip(id);
+    let _ = f.client(id).window(&surface).recent_configures();
+
+    let window = f.client(id).window(&surface);
+    window.set_app_id("remembered");
+    window.set_title("main");
+    window.commit();
+    f.roundtrip(id);
+
+    let window = f.client(id).window(&surface);
+    assert_snapshot!(
+        window.format_recent_configures(),
+        @"size: 300 × 200, bounds: 1920 × 1080, states: []"
+    );
+
+    window.attach_new_buffer();
+    window.set_size(300, 200);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+
+    let mut pos = None;
+    f.niri().layout.with_windows(|_, _, _, layout| {
+        pos = layout.tile_pos_in_workspace_view;
+    });
+    assert_eq!(pos, Some((500., 400.)));
+}
+
+#[test]
+fn window_rules_win_over_remembered_floating_geometry() {
+    let config = r##"
+window-rule {
+    open-floating true
+    default-column-width { fixed 400; }
+    default-floating-position x=10 y=20 relative-to="top-left"
+}
+"##;
+    let config = Config::parse_mem(config).unwrap();
+    let mut f = Fixture::with_config(config);
+    f.add_output(1, (1920, 1080));
+
+    let id = f.add_client();
+    let window = f.client(id).create_window();
+    let surface = window.surface.clone();
+    window.set_app_id("remembered");
+    window.set_title("main");
+    window.commit();
+    f.roundtrip(id);
+
+    let window = f.client(id).window(&surface);
+    window.attach_new_buffer();
+    window.set_size(300, 250);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+
+    f.niri().layout.move_floating_window(
+        None,
+        niri_ipc::PositionChange::SetFixed(500.),
+        niri_ipc::PositionChange::SetFixed(400.),
+        false,
+    );
+
+    let window = f.client(id).window(&surface);
+    window.attach_null();
+    window.commit();
+    f.double_roundtrip(id);
+    let _ = f.client(id).window(&surface).recent_configures();
+
+    let window = f.client(id).window(&surface);
+    window.set_app_id("remembered");
+    window.set_title("main");
+    window.commit();
+    f.roundtrip(id);
+
+    let window = f.client(id).window(&surface);
+    assert_snapshot!(
+        window.format_recent_configures(),
+        @"size: 400 × 250, bounds: 1920 × 1080, states: []"
+    );
+
+    window.attach_new_buffer();
+    window.set_size(400, 250);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+
+    let mut pos = None;
+    f.niri().layout.with_windows(|_, _, _, layout| {
+        pos = layout.tile_pos_in_workspace_view;
+    });
+    assert_eq!(pos, Some((10., 20.)));
+}

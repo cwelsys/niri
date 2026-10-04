@@ -18,6 +18,7 @@ use smithay::wayland::shell::xdg::ToplevelCachedState;
 use smithay::wayland::shm::{ShmHandler, ShmState};
 
 use super::xdg_shell::add_mapped_toplevel_pre_commit_hook;
+use crate::floating_memory::FloatingMemory;
 use crate::handlers::XDG_ACTIVATION_TOKEN_TIMEOUT;
 use crate::layout::{ActivateWindow, AddWindowTarget, LayoutElement as _};
 use crate::niri::{CastTarget, ClientState, LockState, State};
@@ -194,10 +195,13 @@ impl CompositorHandler for State {
                     // The mapped pre-commit hook deals with dma-bufs on its own.
                     self.remove_default_dmabuf_pre_commit_hook(surface);
                     let hook = add_mapped_toplevel_pre_commit_hook(toplevel);
-                    let mapped = {
+                    let floating_memory_key = FloatingMemory::key(toplevel);
+                    let has_position_rule = rules.default_floating_position.is_some();
+                    let mut mapped = {
                         let config = self.niri.config.borrow();
                         Mapped::new(window, rules, hook, &config)
                     };
+                    mapped.floating_memory_key = floating_memory_key.clone();
                     let window = mapped.window.clone();
 
                     let target = if let Some(p) = &parent {
@@ -220,6 +224,18 @@ impl CompositorHandler for State {
                         activate,
                     );
                     let output = output.cloned();
+
+                    let remembered = floating_memory_key
+                        .filter(|_| is_floating && !has_position_rule)
+                        .and_then(|key| self.niri.floating_memory.get(&key));
+                    if let Some(geometry) = remembered {
+                        self.niri.layout.move_floating_window(
+                            Some(&window),
+                            PositionChange::SetProportion(geometry.pos.0 * 100.),
+                            PositionChange::SetProportion(geometry.pos.1 * 100.),
+                            false,
+                        );
+                    }
 
                     // The window state cannot contain Fullscreen and Maximized at once. Therefore,
                     // if the window ended up fullscreen, then we only know that it is also
@@ -264,6 +280,7 @@ impl CompositorHandler for State {
                 let output = output.cloned();
 
                 let id = mapped.id();
+                let size_before_unmap = window.geometry().size;
 
                 // This is a commit of a previously-mapped toplevel.
                 let is_mapped = is_mapped(surface);
@@ -294,7 +311,12 @@ impl CompositorHandler for State {
                         .stop_casts_for_target(CastTarget::Window { id: id.get() });
 
                     self.niri.window_mru_ui.remove_window(id);
-                    self.niri.layout.remove_window(&window, transaction.clone());
+                    let removed = self.niri.layout.remove_window(&window, transaction.clone());
+                    if let Some(removed) = &removed {
+                        self.niri
+                            .floating_memory
+                            .remember(removed, Some(size_before_unmap));
+                    }
                     self.add_default_dmabuf_pre_commit_hook(surface);
 
                     // If this is the only instance, then this transaction will complete
