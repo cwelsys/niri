@@ -7,7 +7,7 @@ use smithay::utils::{Logical, Size};
 use smithay::wayland::compositor::with_states;
 use smithay::wayland::shell::xdg::{ToplevelSurface, XdgToplevelSurfaceData};
 
-use crate::layout::{Layout, RemovedTile};
+use crate::layout::{Layout, LayoutElement as _, RemovedTile};
 use crate::utils::transaction::Transaction;
 use crate::window::{Mapped, ResolvedWindowRules};
 
@@ -114,7 +114,10 @@ impl FloatingMemory {
             entry.floating = Some(removed.is_floating());
         }
 
-        if let Some((pos, size)) = removed.floating_geometry() {
+        let geometry = removed
+            .floating_geometry()
+            .filter(|_| mapped.rules().remember_floating_geometry != Some(false));
+        if let Some((pos, size)) = geometry {
             let size = size_before_unmap.unwrap_or(size);
             if size.w > 0 && size.h > 0 {
                 entry.pos = Some((pos.x, pos.y));

@@ -1928,6 +1928,54 @@ fn floating_memory_resize_is_remembered() {
 }
 
 #[test]
+fn remember_floating_geometry_false_does_not_remember() {
+    let (mut f, id, surface) = floating_fixture(
+        r#"window-rule { match app-id="remembered"; remember-floating-geometry false; }"#,
+    );
+
+    // Open the window and move it.
+    open_remembered_window(&mut f, id, &surface);
+    move_only_window_to(&mut f, 500., 400.);
+    close_window(&mut f, id, &surface);
+
+    // Reopen it. Nothing should be remembered.
+    assert_snapshot!(
+        initial_configure_of_remembered_window(&mut f, id, &surface),
+        @"size: 0 × 0, bounds: 1920 × 1080, states: []"
+    );
+}
+
+#[test]
+fn remember_floating_geometry_false_does_not_restore() {
+    let (mut f, id, surface) = floating_fixture("");
+
+    // Open the window and move it.
+    open_remembered_window(&mut f, id, &surface);
+    move_only_window_to(&mut f, 500., 400.);
+    close_window(&mut f, id, &surface);
+
+    // Turn off remembering for the window and reopen it. The remembered geometry shouldn't apply.
+    let config = Config::parse_mem(
+        r#"
+window-rule { open-floating true; }
+window-rule { match app-id="remembered"; remember-floating-geometry false; }
+"#,
+    )
+    .unwrap();
+    f.niri_state().reload_config(Ok(config));
+    assert_snapshot!(
+        initial_configure_of_remembered_window(&mut f, id, &surface),
+        @"size: 0 × 0, bounds: 1920 × 1080, states: []"
+    );
+    let window = f.client(id).window(&surface);
+    window.attach_new_buffer();
+    window.set_size(300, 200);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+    assert_ne!(only_window_pos(&mut f), Some((500., 400.)));
+}
+
+#[test]
 fn is_first_of_app_matcher() {
     let config = r##"
 window-rule {

@@ -1923,6 +1923,7 @@ mod tests {
                             relative_to: BottomLeft,
                         },
                     ),
+                    remember_floating_geometry: None,
                     scroll_factor: None,
                     pinch_sensitivity: Some(
                         FloatOrInt(
