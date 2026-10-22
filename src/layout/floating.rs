@@ -759,6 +759,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
         let tile = &mut self.tiles[idx];
         tile.floating_preset_width_idx = None;
+        tile.floating_geometry_touched = true;
 
         let available_size = self.working_area.size.w;
         let win = tile.window();
@@ -806,6 +807,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
         let tile = &mut self.tiles[idx];
         tile.floating_preset_height_idx = None;
+        tile.floating_geometry_touched = true;
 
         let available_size = self.working_area.size.h;
         let win = tile.window();
@@ -931,6 +933,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         } else {
             self.data[idx].set_logical_pos(new_pos);
         }
+        self.tiles[idx].floating_geometry_touched = true;
 
         self.interactive_resize_end(None);
     }

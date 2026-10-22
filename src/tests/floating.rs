@@ -1830,6 +1830,103 @@ fn floating_memory_remember_all_at_exit() {
     assert!(only_window_is_floating(&mut f));
 }
 
+fn floating_fixture(extra_rules: &str) -> (Fixture, ClientId, WlSurface) {
+    let config = format!("window-rule {{ open-floating true; }}\n{extra_rules}");
+    let config = Config::parse_mem(&config).unwrap();
+    let mut f = Fixture::with_config(config);
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let surface = f.client(id).create_window().surface.clone();
+    (f, id, surface)
+}
+
+fn move_only_window_to(f: &mut Fixture, x: f64, y: f64) {
+    f.niri().layout.move_floating_window(
+        None,
+        niri_ipc::PositionChange::SetFixed(x),
+        niri_ipc::PositionChange::SetFixed(y),
+        false,
+    );
+}
+
+fn only_window_pos(f: &mut Fixture) -> Option<(f64, f64)> {
+    let mut pos = None;
+    f.niri().layout.with_windows(|_, _, _, layout| {
+        pos = layout.tile_pos_in_workspace_view;
+    });
+    pos
+}
+
+// Sends the initial commit of the remembered window and returns its first configure.
+fn initial_configure_of_remembered_window(
+    f: &mut Fixture,
+    id: ClientId,
+    surface: &WlSurface,
+) -> String {
+    let _ = f.client(id).window(surface).recent_configures();
+    let window = f.client(id).window(surface);
+    window.set_app_id("remembered");
+    window.set_title("main");
+    window.commit();
+    f.roundtrip(id);
+    f.client(id).window(surface).format_recent_configures()
+}
+
+#[test]
+fn floating_memory_untouched_window_is_not_remembered() {
+    let (mut f, id, surface) = floating_fixture("");
+
+    // Open the window and move it.
+    open_remembered_window(&mut f, id, &surface);
+    move_only_window_to(&mut f, 500., 400.);
+    close_window(&mut f, id, &surface);
+
+    // Open a window with the same app ID and title that picks its own size, and close it without
+    // moving or resizing it.
+    initial_configure_of_remembered_window(&mut f, id, &surface);
+    let window = f.client(id).window(&surface);
+    window.attach_new_buffer();
+    window.set_size(100, 80);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+    close_window(&mut f, id, &surface);
+
+    // Reopen it. It should get the geometry of the window that was moved.
+    assert_snapshot!(
+        initial_configure_of_remembered_window(&mut f, id, &surface),
+        @"size: 300 × 200, bounds: 1920 × 1080, states: []"
+    );
+    let window = f.client(id).window(&surface);
+    window.attach_new_buffer();
+    window.set_size(300, 200);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+    assert_eq!(only_window_pos(&mut f), Some((500., 400.)));
+}
+
+#[test]
+fn floating_memory_resize_is_remembered() {
+    let (mut f, id, surface) = floating_fixture("");
+
+    // Open the window and resize it.
+    open_remembered_window(&mut f, id, &surface);
+    f.niri()
+        .layout
+        .set_window_width(None, SizeChange::SetFixed(500));
+    f.double_roundtrip(id);
+    let window = f.client(id).window(&surface);
+    window.set_size(500, 200);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+    close_window(&mut f, id, &surface);
+
+    // Reopen it. It should get the new size.
+    assert_snapshot!(
+        initial_configure_of_remembered_window(&mut f, id, &surface),
+        @"size: 500 × 200, bounds: 1920 × 1080, states: []"
+    );
+}
+
 #[test]
 fn is_first_of_app_matcher() {
     let config = r##"

@@ -516,7 +516,7 @@ impl<W: LayoutElement> RemovedTile<W> {
     }
 
     pub fn floating_geometry(&self) -> Option<(Point<f64, SizeFrac>, Size<i32, Logical>)> {
-        if !self.is_floating {
+        if !self.is_floating || !self.tile.floating_geometry_touched {
             return None;
         }
 
@@ -3328,6 +3328,16 @@ impl<W: LayoutElement> Layout<W> {
         workspace.move_floating_window(id, x, y, animate);
     }
 
+    pub fn restore_floating_window(&mut self, id: &W::Id, x: PositionChange, y: PositionChange) {
+        self.move_floating_window(Some(id), x, y, false);
+
+        for ws in self.workspaces_mut() {
+            if let Some(tile) = ws.tiles_mut().find(|tile| tile.window().id() == id) {
+                tile.floating_geometry_touched = false;
+            }
+        }
+    }
+
     pub fn focus_output(&mut self, output: &Output) {
         if let MonitorSet::Normal {
             monitors,
@@ -4335,6 +4345,7 @@ impl<W: LayoutElement> Layout<W> {
                                     let pos =
                                         mon.workspaces[ws_idx].floating_logical_to_size_frac(pos);
                                     tile.floating_pos = Some(pos);
+                                    tile.floating_geometry_touched = true;
                                 } else {
                                     error!(
                                         "offset unset for inserting a floating tile \

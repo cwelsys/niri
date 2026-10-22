@@ -232,11 +232,10 @@ impl CompositorHandler for State {
                         .filter(|_| is_floating && !has_position_rule)
                         .and_then(|key| self.niri.floating_memory.get(&key));
                     if let Some(geometry) = remembered {
-                        self.niri.layout.move_floating_window(
-                            Some(&window),
+                        self.niri.layout.restore_floating_window(
+                            &window,
                             PositionChange::SetProportion(geometry.pos.0 * 100.),
                             PositionChange::SetProportion(geometry.pos.1 * 100.),
-                            false,
                         );
                     }
 
