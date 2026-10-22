@@ -79,6 +79,8 @@ pub struct WindowRule {
     #[knuffel(child)]
     pub default_floating_position: Option<FloatingPosition>,
     #[knuffel(child, unwrap(argument))]
+    pub remember_floating_geometry: Option<bool>,
+    #[knuffel(child, unwrap(argument))]
     pub scroll_factor: Option<FloatOrInt<0, 100>>,
     #[knuffel(child, unwrap(argument))]
     pub pinch_sensitivity: Option<FloatOrInt<0, 100>>,

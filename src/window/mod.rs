@@ -52,6 +52,8 @@ pub struct ResolvedWindowRules {
     /// Default floating position for this window.
     pub default_floating_position: Option<FloatingPosition>,
 
+    pub remember_floating_geometry: Option<bool>,
+
     /// Output to open this window on.
     pub open_on_output: Option<String>,
 
@@ -242,6 +244,10 @@ impl ResolvedWindowRules {
 
                 if let Some(x) = rule.default_floating_position {
                     resolved.default_floating_position = Some(x);
+                }
+
+                if let Some(x) = rule.remember_floating_geometry {
+                    resolved.remember_floating_geometry = Some(x);
                 }
 
                 if let Some(x) = rule.open_on_output.as_deref() {

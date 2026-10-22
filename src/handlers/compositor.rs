@@ -197,7 +197,8 @@ impl CompositorHandler for State {
                     self.remove_default_dmabuf_pre_commit_hook(surface);
                     let hook = add_mapped_toplevel_pre_commit_hook(toplevel);
                     let floating_memory_key = FloatingMemory::key(toplevel);
-                    let has_position_rule = rules.default_floating_position.is_some();
+                    let restore_position = rules.default_floating_position.is_none()
+                        && rules.remember_floating_geometry != Some(false);
                     let mut mapped = {
                         let config = self.niri.config.borrow();
                         Mapped::new(window, rules, hook, &config)
@@ -229,7 +230,7 @@ impl CompositorHandler for State {
                     let output = output.cloned();
 
                     let remembered = floating_memory_key
-                        .filter(|_| is_floating && !has_position_rule)
+                        .filter(|_| is_floating && restore_position)
                         .and_then(|key| self.niri.floating_memory.get(&key));
                     if let Some(geometry) = remembered {
                         self.niri.layout.restore_floating_window(

@@ -60,6 +60,7 @@ window-rule {
     variable-refresh-rate true
     default-column-display "tabbed"
     default-floating-position x=100 y=200 relative-to="bottom-left"
+    remember-floating-geometry false
     scroll-factor 0.75
     pinch-sensitivity 1.25
     on-xdg-activate "focus"
@@ -798,6 +799,24 @@ window-rule {
     default-window-height { proportion 0.5; }
     // 80% of the screen wide.
     default-column-width { proportion 0.8; }
+}
+```
+
+#### `remember-floating-geometry`
+
+Floating windows that you move or resize remember their position and size when they close, and open there next time.
+Windows are remembered by app ID and the title they opened with, in `floating-memory.json` in niri's state directory.
+Windows that you never moved or resized while they were open don't overwrite what's remembered.
+
+Set this to `false` to stop remembering and restoring the geometry for this window.
+`default-floating-position`, `default-column-width` and `default-window-height` already win over the remembered geometry.
+
+```kdl
+// Don't let 1Password prompts and the main window share a size.
+window-rule {
+    match app-id=r#"^com\.onepassword\.OnePassword$"#
+
+    remember-floating-geometry false
 }
 ```
 

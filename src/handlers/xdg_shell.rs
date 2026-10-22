@@ -1213,7 +1213,7 @@ impl State {
             floating_height = ws.resolve_default_height(rules.default_height, true);
 
             let remembered = FloatingMemory::key(toplevel)
-                .filter(|_| is_floating)
+                .filter(|_| is_floating && rules.remember_floating_geometry != Some(false))
                 .and_then(|key| self.niri.floating_memory.get(&key));
             if let Some(geometry) = remembered {
                 floating_width = floating_width.or(Some(PresetSize::Fixed(geometry.size.0)));
