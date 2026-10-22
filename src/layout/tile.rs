@@ -75,6 +75,8 @@ pub struct Tile<W: LayoutElement> {
     /// the window starts out in the tiling layout.
     pub(super) floating_pos: Option<Point<f64, SizeFrac>>,
 
+    pub(super) floating_geometry_touched: bool,
+
     /// Currently selected preset width index when this tile is floating.
     pub(super) floating_preset_width_idx: Option<usize>,
 
@@ -203,6 +205,7 @@ impl<W: LayoutElement> Tile<W> {
             restore_to_floating: false,
             floating_window_size: None,
             floating_pos: None,
+            floating_geometry_touched: false,
             floating_preset_width_idx: None,
             floating_preset_height_idx: None,
             open_animation: None,
