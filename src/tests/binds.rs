@@ -527,6 +527,9 @@ fn layouts() {
     binds {
         Q { close-window; }
         Shift+Slash { close-window; }
+        Cyrillic_ya { close-window; }
+        Shift+Cyrillic_che { close-window; }
+        Shift+Cyrillic_ES { close-window; }
     }
     "#;
 
@@ -606,6 +609,186 @@ fn layouts() {
         surface modifiers: depressed=0, latched=0, locked=0, group=1
     "
     );
+
+    // Я should trigger the Cyrillic_ya bind, but it currently doesn't. (Nobody binds keys like this
+    // in Russia, but people do in other countries with their non-ASCII characters.)
+    assert_snapshot!(
+        run(c, "+LALT -LALT +LatZ -LatZ"),
+        @"
+    +LALT  64 XK_ISO_Next_Group
+        surface key pressed: 56
+        surface modifiers: depressed=0, latched=0, locked=0, group=1
+    -LALT  64 XK_ISO_Next_Group
+        surface key released: 56
+    +AB01  52 XK_Cyrillic_ya
+        surface key pressed: 44
+    -AB01  52 XK_Cyrillic_ya
+        surface key released: 44
+    "
+    );
+
+    // Non-ASCII binds should also be case-insensitive where reasonable, just like ASCII ones. Or,
+    // more accurately, the trigger key for a Modifier+key bind should be Modifier-insensitive.
+    assert_snapshot!(
+        run(c, "+LALT -LALT +LFSH +LatX -LatX -LFSH"),
+        @"
+    +LALT  64 XK_ISO_Next_Group
+        surface key pressed: 56
+        surface modifiers: depressed=0, latched=0, locked=0, group=1
+    -LALT  64 XK_ISO_Next_Group
+        surface key released: 56
+    +LFSH  50 XK_Shift_L
+        surface key pressed: 42
+        surface modifiers: depressed=1, latched=0, locked=0, group=1
+    +AB02  53 XK_Cyrillic_CHE
+        surface key pressed: 45
+    -AB02  53 XK_Cyrillic_CHE
+        surface key released: 45
+    -LFSH  50 XK_Shift_L
+        surface key released: 42
+        surface modifiers: depressed=0, latched=0, locked=0, group=1
+    "
+    );
+    assert_snapshot!(
+        run(c, "+LALT -LALT +LFSH +LatC -LatC -LFSH"),
+        @"
+    +LALT  64 XK_ISO_Next_Group
+        surface key pressed: 56
+        surface modifiers: depressed=0, latched=0, locked=0, group=1
+    -LALT  64 XK_ISO_Next_Group
+        surface key released: 56
+    +LFSH  50 XK_Shift_L
+        surface key pressed: 42
+        surface modifiers: depressed=1, latched=0, locked=0, group=1
+    +AB03  54 XK_Cyrillic_ES
+        surface key pressed: 46
+    -AB03  54 XK_Cyrillic_ES
+        surface key released: 46
+    -LFSH  50 XK_Shift_L
+        surface key released: 42
+        surface modifiers: depressed=0, latched=0, locked=0, group=1
+    "
+    );
+
+    // ASCII binds on Russian should search the configured ASCII layout, not QWERTY.
+    // LatR corresponds to P on colemak_dh_ortho.
+    let c = r#"
+    input {
+        keyboard {
+            xkb {
+                layout "us,ru"
+                variant "colemak_dh_ortho,"
+                options "grp:lalt_toggle"
+            }
+        }
+    }
+
+    binds {
+        P { close-window; }
+    }
+    "#;
+    assert_snapshot!(run(c, "+LALT -LALT +LatR -LatR"),
+    @"
+    +LALT  64 XK_ISO_Next_Group
+        surface key pressed: 56
+        surface modifiers: depressed=0, latched=0, locked=0, group=1
+    -LALT  64 XK_ISO_Next_Group
+        surface key released: 56
+    +AD04  27 XK_Cyrillic_ka
+        niri test-action
+    -AD04  27 XK_Cyrillic_ka
+    ");
+
+    // ASCII fallback should find the first configured ASCII layout.
+    let c = r#"
+    input {
+        keyboard {
+            xkb {
+                layout "ru,us,us"
+                variant ",colemak_dh_ortho,"
+                options "grp:lalt_toggle"
+            }
+        }
+    }
+
+    binds {
+        P { close-window; }
+    }
+    "#;
+    // Input in ru (should fall back to us-colemak),
+    // then input in us-colemak (no fallback, works),
+    // then input in us-qwerty (no fallback, no bind).
+    assert_snapshot!(run(c, "+LatR -LatR +LALT -LALT +LatR -LatR +LALT -LALT +LatR -LatR"),
+    @"
+    +AD04  27 XK_Cyrillic_ka
+        niri test-action
+    -AD04  27 XK_Cyrillic_ka
+    +LALT  64 XK_ISO_Next_Group
+        surface key pressed: 56
+        surface modifiers: depressed=0, latched=0, locked=0, group=1
+    -LALT  64 XK_ISO_Next_Group
+        surface key released: 56
+    +AD04  27 XK_p
+        niri test-action
+    -AD04  27 XK_p
+    +LALT  64 XK_ISO_Next_Group
+        surface key pressed: 56
+        surface modifiers: depressed=0, latched=0, locked=0, group=2
+    -LALT  64 XK_ISO_Next_Group
+        surface key released: 56
+    +AD04  27 XK_r
+        surface key pressed: 19
+    -AD04  27 XK_r
+        surface key released: 19
+    ");
+
+    // We require the modifiers to match the bind for it to trigger.
+    // So Ctrl-? cannot be triggered on us-qwerty since entering ? necessarily requires a Shift.
+    // If you spell out Shift like Super-Shift-?, it should be triggerable (but currently isn't).
+    let c = r#"
+    input {
+        keyboard {
+            xkb {
+                layout "us"
+            }
+        }
+    }
+
+    binds {
+        Ctrl+question { close-window; }
+        Super+Shift+question { close-window; }
+    }
+    "#;
+    assert_snapshot!(run(c, "+LCTL +AB10 -AB10 +LFSH +AB10 -AB10"),
+    @"
+    +LCTL  37 XK_Control_L
+        surface key pressed: 29
+        surface modifiers: depressed=4, latched=0, locked=0, group=0
+    +AB10  61 XK_slash
+        surface key pressed: 53
+    -AB10  61 XK_slash
+        surface key released: 53
+    +LFSH  50 XK_Shift_L
+        surface key pressed: 42
+        surface modifiers: depressed=5, latched=0, locked=0, group=0
+    +AB10  61 XK_question
+        surface key pressed: 53
+    -AB10  61 XK_question
+        surface key released: 53
+    ");
+    assert_snapshot!(run(c, "+LWIN +LFSH +AB10 -AB10"),
+    @"
+    +LWIN 133 XK_Super_L
+        surface key pressed: 125
+        surface modifiers: depressed=64, latched=0, locked=0, group=0
+    +LFSH  50 XK_Shift_L
+        surface key pressed: 42
+        surface modifiers: depressed=65, latched=0, locked=0, group=0
+    +AB10  61 XK_question
+        surface key pressed: 53
+    -AB10  61 XK_question
+        surface key released: 53
+    ");
 }
 
 #[test]
