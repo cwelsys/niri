@@ -38,6 +38,7 @@ window-rule {
     match is-urgent=true
     match at-startup=true
     match is-first-of-app=true
+    match is-fixed-size=true
 
     // Properties that apply once upon window opening.
     default-column-width { proportion 0.75; }
@@ -362,6 +363,24 @@ window-rule {
 window-rule {
     match app-id="^firefox$" is-first-of-app=true
     open-floating false
+}
+```
+
+#### `is-fixed-size`
+
+Can be `true` or `false`.
+Matches a window whose minimum and maximum size are the same, so it cannot be resized.
+For X11 windows through xwayland-satellite, these come from the window's `WM_NORMAL_HINTS`.
+
+This is useful for menus and dialogs that share an app ID and title with their app's main window.
+The size is the one the window sets for itself, not one changed by the `min-width` and similar rules.
+
+```kdl
+// Open the Battle.net tray menu by the tray, not where the main window was.
+window-rule {
+    match app-id=r#"^battle\.net\.exe$"# title=r#"^Battle\.net$"# is-fixed-size=true
+    default-floating-position x=8 y=8 relative-to="top-right"
+    remember-floating-geometry false
 }
 ```
 

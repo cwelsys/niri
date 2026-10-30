@@ -200,6 +200,15 @@ impl<'a> WindowRef<'a> {
             WindowRef::Mapped(mapped) => mapped.is_first_of_app,
         }
     }
+
+    pub fn is_fixed_size(self) -> bool {
+        let (min_size, max_size) = with_states(self.toplevel().wl_surface(), |state| {
+            let mut guard = state.cached_state.get::<SurfaceCachedState>();
+            let current = guard.current();
+            (current.min_size, current.max_size)
+        });
+        min_size.w > 0 && min_size.h > 0 && min_size == max_size
+    }
 }
 
 impl ResolvedWindowRules {
@@ -207,6 +216,7 @@ impl ResolvedWindowRules {
         let _span = tracy_client::span!("ResolvedWindowRules::compute");
 
         let mut resolved = ResolvedWindowRules::default();
+        let window_is_fixed_size = window.is_fixed_size();
 
         with_toplevel_role(window.toplevel(), |role| {
             // Ensure server_pending like in Smithay's with_pending_state().
@@ -223,6 +233,12 @@ impl ResolvedWindowRules {
                 let matches = |m: &Match| {
                     if let Some(at_startup) = m.at_startup {
                         if at_startup != is_at_startup {
+                            return false;
+                        }
+                    }
+
+                    if let Some(is_fixed_size) = m.is_fixed_size {
+                        if is_fixed_size != window_is_fixed_size {
                             return false;
                         }
                     }
