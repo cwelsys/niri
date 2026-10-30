@@ -2039,3 +2039,53 @@ window-rule {
     let _new_main = open(&mut f, "browser");
     assert_eq!(floating(&mut f), [false, false]);
 }
+
+#[test]
+fn is_fixed_size_matcher() {
+    let config = r##"
+window-rule {
+    match is-fixed-size=true
+    open-floating false
+}
+
+window-rule {
+    match is-fixed-size=false
+    open-floating true
+}
+"##;
+    let config = Config::parse_mem(config).unwrap();
+    let mut f = Fixture::with_config(config);
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    // Opens a 300×200 window with the given min and max size.
+    let open = |f: &mut Fixture, min: (i32, i32), max: (i32, i32)| {
+        let surface = f.client(id).create_window().surface.clone();
+        let window = f.client(id).window(&surface);
+        window.xdg_toplevel.set_min_size(min.0, min.1);
+        window.xdg_toplevel.set_max_size(max.0, max.1);
+        window.commit();
+        f.roundtrip(id);
+
+        let window = f.client(id).window(&surface);
+        window.attach_new_buffer();
+        window.set_size(300, 200);
+        window.ack_last_and_commit();
+        f.double_roundtrip(id);
+    };
+    // Returns whether each window is floating, in the order they were opened.
+    let floating = |f: &mut Fixture| -> Vec<bool> {
+        let ws = f.niri().layout.active_workspace().unwrap();
+        let mut rv: Vec<_> = ws
+            .windows()
+            .map(|mapped| (mapped.id().get(), ws.is_floating(&mapped.window)))
+            .collect();
+        rv.sort();
+        rv.into_iter().map(|(_, floating)| floating).collect()
+    };
+
+    open(&mut f, (300, 200), (300, 200));
+    open(&mut f, (0, 0), (0, 0));
+    open(&mut f, (300, 200), (0, 0));
+    assert_eq!(floating(&mut f), [false, true, true]);
+}

@@ -164,6 +164,8 @@ pub struct Match {
     pub at_startup: Option<bool>,
     #[knuffel(property)]
     pub is_first_of_app: Option<bool>,
+    #[knuffel(property)]
+    pub is_fixed_size: Option<bool>,
 }
 
 #[derive(knuffel::Decode, Debug, Clone, Copy, PartialEq)]

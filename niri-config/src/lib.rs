@@ -2238,6 +2238,7 @@ window-rule {
                             is_urgent: None,
                             at_startup: None,
                             is_first_of_app: None,
+                            is_fixed_size: None,
                         },
                     ],
                     excludes: [
@@ -2258,6 +2259,7 @@ window-rule {
                             is_urgent: None,
                             at_startup: None,
                             is_first_of_app: None,
+                            is_fixed_size: None,
                         },
                         Match {
                             app_id: None,
@@ -2274,6 +2276,7 @@ window-rule {
                             is_urgent: None,
                             at_startup: None,
                             is_first_of_app: None,
+                            is_fixed_size: None,
                         },
                     ],
                     default_column_width: None,
