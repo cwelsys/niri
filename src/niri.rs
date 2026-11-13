@@ -1419,24 +1419,20 @@ impl State {
             let is_overview_open = self.niri.layout.is_overview_open();
 
             let mut surface = grab_on_layer(Layer::Overlay);
-            // FIXME: we shouldn't prioritize the top layer grabs over regular overlay input or a
-            // fullscreen layout window. This will need tracking in grab() to avoid handing it out
-            // in the first place. Or a better way to structure this code.
-            surface = surface.or_else(|| grab_on_layer(Layer::Top));
-
-            if !is_overview_open {
-                surface = surface.or_else(|| grab_on_layer(Layer::Bottom));
-                surface = surface.or_else(|| grab_on_layer(Layer::Background));
-            }
-
-            surface = surface.or_else(|| focus_on_layer(Layer::Overlay));
 
             if mon.render_above_top_layer() {
+                surface = surface.or_else(|| focus_on_layer(Layer::Overlay));
                 surface = surface.or_else(layout_focus);
-                surface = surface.or_else(|| focus_on_layer(Layer::Top));
-                surface = surface.or_else(|| focus_on_layer(Layer::Bottom));
                 surface = surface.or_else(|| focus_on_layer(Layer::Background));
             } else {
+                surface = surface.or_else(|| grab_on_layer(Layer::Top));
+
+                if !is_overview_open {
+                    surface = surface.or_else(|| grab_on_layer(Layer::Bottom));
+                    surface = surface.or_else(|| grab_on_layer(Layer::Background));
+                }
+
+                surface = surface.or_else(|| focus_on_layer(Layer::Overlay));
                 surface = surface.or_else(|| focus_on_layer(Layer::Top));
 
                 if is_overview_open {
@@ -3579,6 +3575,15 @@ impl Niri {
             return false;
         }
 
+        let Some(mon) = self.layout.monitor_for_output(output) else {
+            return false;
+        };
+
+        // A fullscreen window above top layer covers bottom and background popups.
+        if mon.render_above_top_layer() {
+            return false;
+        }
+
         // Check if some layer-shell surface is on top.
         let layers = layer_map_for_output(output);
         let layer_popup_under = |layer| {
@@ -3596,7 +3601,6 @@ impl Niri {
                     layer_pos_within_output += mapped.bob_offset();
 
                     // Background and bottom layers move together with the workspaces.
-                    let mon = self.layout.monitor_for_output(output)?;
                     let (_, geo) = mon.workspace_under(pos_within_output)?;
                     layer_pos_within_output += geo.loc;
 
@@ -3829,11 +3833,6 @@ impl Niri {
             under = under
                 .or_else(interactive_moved_window_under)
                 .or_else(window_under)
-                .or_else(|| layer_popup_under(Layer::Top))
-                .or_else(|| layer_toplevel_under(Layer::Top))
-                .or_else(|| layer_popup_under(Layer::Bottom))
-                .or_else(|| layer_popup_under(Layer::Background))
-                .or_else(|| layer_toplevel_under(Layer::Bottom))
                 .or_else(|| layer_toplevel_under(Layer::Background));
         } else {
             if self.is_inside_hot_corner(output, pos_within_output) {
@@ -4239,14 +4238,22 @@ impl Niri {
         output_state.frame_callback_sequence = output_state.frame_callback_sequence.wrapping_add(1);
 
         match mem::replace(&mut output_state.redraw_state, RedrawState::Idle) {
-            RedrawState::Idle => unreachable!(),
-            RedrawState::Queued => unreachable!(),
-            RedrawState::WaitingForVBlank { .. } => unreachable!(),
             RedrawState::WaitingForEstimatedVBlank(_) => (),
             // The timer fired just in front of a redraw.
             RedrawState::WaitingForEstimatedVBlankAndQueued(_) => {
                 output_state.redraw_state = RedrawState::Queued;
                 return;
+            }
+            // Unexpected states, but let's not crash the compositor.
+            // https://github.com/niri-wm/niri/issues/4781
+            state @ (RedrawState::Idle
+            | RedrawState::Queued
+            | RedrawState::WaitingForVBlank { .. }) => {
+                error!(
+                    "unexpected redraw state for output {name} \
+                    (should be WaitingForEstimatedVBlank or WaitingForEstimatedVBlankAndQueued): \
+                    {state:?}"
+                );
             }
         }
 
@@ -4991,12 +4998,10 @@ impl Niri {
 
             mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
 
-            push_popups_from_layer!(Layer::Top);
-            push_normal_from_layer!(Layer::Top);
-
-            push_popups_from_layer!(Layer::Bottom);
-            push_popups_from_layer!(Layer::Background);
-            push_normal_from_layer!(Layer::Bottom);
+            // Draw only the background layer, matching fill_xray_elements(). The idea is that with
+            // transparent fullscreen backdrop, the fullscreen window having or not having xray
+            // shouldn't change the visuals. This seems to match the visual intent people have when
+            // using a transparent fullscreen backdrop.
             push_normal_from_layer!(Layer::Background);
 
             // We don't expect more than one workspace when render_above_top_layer().

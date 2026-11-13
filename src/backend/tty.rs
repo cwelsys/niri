@@ -1758,6 +1758,14 @@ impl Tty {
                     "unexpected redraw state for output {name} (should be WaitingForVBlank); \
                      can happen when resuming from sleep or powering on monitors: {state:?}"
                 );
+
+                // Remove the leftover timer.
+                if let RedrawState::WaitingForEstimatedVBlank(token)
+                | RedrawState::WaitingForEstimatedVBlankAndQueued(token) = state
+                {
+                    niri.event_loop.remove(token);
+                }
+
                 true
             }
         };
