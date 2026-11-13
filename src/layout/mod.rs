@@ -3660,26 +3660,6 @@ impl<W: LayoutElement> Layout<W> {
         self.set_windowed_fullscreen(id, value);
     }
 
-    pub fn set_windowed_fullscreen(&mut self, id: &W::Id, value: bool) {
-        let (_, window) = self.windows().find(|(_, win)| win.id() == id).unwrap();
-        if window.pending_sizing_mode().is_fullscreen() {
-            // Remove the real fullscreen.
-            for ws in self.workspaces_mut() {
-                if ws.has_window(id) {
-                    ws.set_fullscreen(id, false);
-                    break;
-                }
-            }
-        }
-
-        // This will switch is_pending_fullscreen() to false right away.
-        self.with_windows_mut(|window, _| {
-            if window.id() == id {
-                window.request_windowed_fullscreen(value);
-            }
-        });
-    }
-
     pub fn set_maximized(&mut self, id: &W::Id, maximize: bool) {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
             if move_.tile.window().id() == id {
