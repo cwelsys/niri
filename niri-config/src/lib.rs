@@ -1660,6 +1660,7 @@ window-rule {
                 ),
                 focus_follows_mouse: Some(
                     FocusFollowsMouse {
+                        outputs_only: None,
                         max_scroll_amount: None,
                     },
                 ),
@@ -2472,7 +2473,10 @@ window-rule {
                     excludes: [],
                     opacity: None,
                     block_out_from: Some(
-                        Screencast,
+                        BlockOutFrom {
+                            target: Screencast,
+                            kind: Fill,
+                        },
                     ),
                     shadow: ShadowRule {
                         off: false,

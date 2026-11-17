@@ -6736,6 +6736,12 @@ impl Niri {
         show_pointer: bool,
         path: Option<String>,
     ) -> anyhow::Result<()> {
+        let target = RenderTarget::ScreenCapture;
+        if target.should_hide(mapped.rules().block_out_from) {
+            // We won't have any elements to render. Saving a fully transparent picture is odd.
+            bail!("window is hidden from screen capture");
+        }
+
         let _span = tracy_client::span!("Niri::screenshot_window");
 
         let scale = Scale::from(output.current_scale().fractional_scale());
@@ -6764,7 +6770,7 @@ impl Niri {
 
         let ctx = RenderCtx {
             renderer,
-            target: RenderTarget::ScreenCapture,
+            target,
             xray: None,
         };
         mapped.render(
@@ -7422,6 +7428,11 @@ impl Niri {
             if current_focus.output.as_ref() != Some(output) {
                 self.layout.focus_output(output);
             }
+        }
+
+        // Skip focusing the window/layer when outputs-only=true
+        if let Some(true) = ffm.outputs_only {
+            return;
         }
 
         if let Some(window) = &new_focus.window {
