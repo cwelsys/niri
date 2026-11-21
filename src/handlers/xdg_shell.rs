@@ -1132,8 +1132,8 @@ impl State {
         let mon = mon.or_else(|| {
             rules
                 .open_on_output
-                .as_deref()
-                .and_then(|name| {
+                .iter()
+                .find_map(|name| {
                     self.niri
                         .global_space
                         .outputs()
