@@ -207,6 +207,13 @@ const CLEAR_COLOR_LOCKED: [f32; 4] = [0.3, 0.1, 0.1, 1.];
 // should be ~1.995 seconds.
 const FRAME_CALLBACK_THROTTLE: Option<Duration> = Some(Duration::from_millis(995));
 
+/// How long to keep ignoring the power key after waking up.
+///
+/// Same as GNOME, which found 1 second to be too short on some devices:
+/// https://mail.gnome.org/archives/commits-list/2018-October/msg05157.html
+#[cfg(feature = "dbus")]
+const POWER_KEY_IGNORE_AFTER_WAKE: Duration = Duration::from_secs(3);
+
 /// Parts of the seat keyboard state that get reset when its keymap is replaced.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SavedKeyboardState {
@@ -289,6 +296,9 @@ pub struct Niri {
     /// Libinput guarantees that the lid switch starts in open state, and if it was closed during
     /// startup, libinput will immediately send a closed event.
     pub is_lid_closed: bool,
+    /// Power key presses before this time get ignored. Set while asleep, and for a bit after
+    /// waking up since the press that woke the system up may arrive after logind says it's awake.
+    pub ignore_power_key_until: Option<Duration>,
 
     /// Runtime toggle for touchpad disabled state (combined with config.touchpad.off).
     pub touchpad_disabled_by_toggle: bool,
@@ -2543,10 +2553,24 @@ impl State {
 
     #[cfg(feature = "dbus")]
     pub fn on_login1_msg(&mut self, msg: Login1ToNiri) {
-        let Login1ToNiri::LidClosedChanged(is_closed) = msg;
-
-        trace!("login1 lid {}", if is_closed { "closed" } else { "opened" });
-        self.set_lid_closed(is_closed);
+        match msg {
+            Login1ToNiri::LidClosedChanged(is_closed) => {
+                trace!("login1 lid {}", if is_closed { "closed" } else { "opened" });
+                self.set_lid_closed(is_closed);
+            }
+            Login1ToNiri::PrepareForSleep(start) => {
+                trace!(
+                    "login1 {}",
+                    if start { "going to sleep" } else { "woke up" }
+                );
+                let until = if start {
+                    Duration::MAX
+                } else {
+                    get_monotonic_time() + POWER_KEY_IGNORE_AFTER_WAKE
+                };
+                self.niri.ignore_power_key_until = Some(until);
+            }
+        }
     }
 
     #[cfg(feature = "dbus")]
@@ -2898,6 +2922,7 @@ impl Niri {
             blocker_cleared_rx,
             monitors_active: true,
             is_lid_closed: false,
+            ignore_power_key_until: None,
             touchpad_disabled_by_toggle: false,
 
             devices: HashSet::new(),
@@ -5169,7 +5194,6 @@ impl Niri {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_layer_normal<R: NiriRenderer>(
         &self,
         mut ctx: RenderCtx<R>,
@@ -5187,7 +5211,6 @@ impl Niri {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_layer_popups<R: NiriRenderer>(
         &self,
         mut ctx: RenderCtx<R>,
@@ -5704,13 +5727,32 @@ impl Niri {
         let state = self.output_state.get(output).unwrap();
         let sequence = state.frame_callback_sequence;
 
+        // HACK: we set this to true for mapped windows that are screencast targets to keep them
+        // redrawing even when they are invisible.
+        //
+        // This is a workaround until we do it properly (famous last words).
+        //
+        // The reason it works is that currently niri will attempt to redraw an output whenever any
+        // window on this output commits, without checking if the window is currently visible. In
+        // particular, windows on other workspaces will still queue output redraws, even though they
+        // are guaranteed to be invisible. The rendering will then notice that nothing changed, and
+        // won't actually touch the GPU, but it will still queue an estimated vblank and send frame
+        // callbacks, letting this code keep sending frame callbacks to invisible windows.
+        //
+        // When niri stops queueing redraws in response to guaranteed-invisible windows, this
+        // workaround will stop working, so we'll need to do it properly then (by keeping the frame
+        // callback timer going through some other means).
+        let ignore_primary_output = Cell::new(false);
+
         let should_send = |surface: &WlSurface, states: &SurfaceData| {
             // Do the standard primary scanout output check. For pointer surfaces it deduplicates
             // the frame callbacks across potentially multiple outputs, and for regular windows and
             // layer-shell surfaces it avoids sending frame callbacks to invisible surfaces.
-            let current_primary_output = surface_primary_scanout_output(surface, states);
-            if current_primary_output.as_ref() != Some(output) {
-                return None;
+            if !ignore_primary_output.get() {
+                let current_primary_output = surface_primary_scanout_output(surface, states);
+                if current_primary_output.as_ref() != Some(output) {
+                    return None;
+                }
             }
 
             // Next, check the throttling status.
@@ -5740,12 +5782,18 @@ impl Niri {
         let frame_callback_time = get_monotonic_time();
 
         for mapped in self.layout.windows_for_output_mut(output) {
+            if mapped.is_window_cast_target() {
+                ignore_primary_output.set(true);
+            }
+
             mapped.send_frame(
                 output,
                 frame_callback_time,
                 FRAME_CALLBACK_THROTTLE,
                 should_send,
             );
+
+            ignore_primary_output.set(false);
         }
 
         for surface in layer_map_for_output(output).layers() {
@@ -6067,7 +6115,6 @@ impl Niri {
     /// Renders the elements into the frame's buffer and completes the frame.
     ///
     /// Returns `true` if it succeeded and `false` otherwise.
-    #[allow(clippy::too_many_arguments)]
     fn capture_image_copy_frame(
         &self,
         renderer: &mut GlesRenderer,
@@ -7047,6 +7094,11 @@ impl Niri {
         }
     }
 
+    pub fn should_ignore_power_key(&self) -> bool {
+        self.ignore_power_key_until
+            .is_some_and(|until| get_monotonic_time() < until)
+    }
+
     pub fn is_locked(&self) -> bool {
         match self.lock_state {
             LockState::Unlocked | LockState::WaitingForSurfaces { .. } => false,
@@ -7407,22 +7459,21 @@ impl Niri {
         }
     }
 
-    pub fn handle_focus_follows_mouse(&mut self, new_focus: &PointContents) {
+    pub fn handle_focus_follows_mouse(
+        &mut self,
+        prev_location: Point<f64, Logical>,
+        new_focus: &PointContents,
+    ) {
         let Some(ffm) = self.config.borrow().input.focus_follows_mouse else {
             return;
         };
-
-        let pointer = &self.seat.get_pointer().unwrap();
-        if pointer.is_grabbed() {
-            return;
-        }
 
         if self.window_mru_ui.is_open() {
             return;
         }
 
         // Recompute the current pointer focus because we don't update it during animations.
-        let current_focus = self.contents_under(pointer.current_location());
+        let current_focus = self.contents_under(prev_location);
 
         if let Some(output) = &new_focus.output {
             if current_focus.output.as_ref() != Some(output) {

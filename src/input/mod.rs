@@ -949,6 +949,14 @@ impl State {
 
                 self.backend.suspend();
             }
+            Action::PowerKeySuspend => {
+                // Don't let the key press that woke the system up put it right back to sleep.
+                if self.niri.should_ignore_power_key() {
+                    return;
+                }
+
+                self.do_action(Action::Suspend, allow_when_locked, time);
+            }
             Action::PowerOffMonitors => {
                 self.niri.deactivate_monitors(&mut self.backend);
             }
@@ -2967,7 +2975,9 @@ impl State {
             }
         }
 
-        self.niri.handle_focus_follows_mouse(&under);
+        if !pointer.is_grabbed() {
+            self.niri.handle_focus_follows_mouse(pos, &under);
+        }
 
         self.niri.pointer_contents.clone_from(&under);
 
@@ -3068,7 +3078,10 @@ impl State {
 
         let under = self.niri.contents_under(pos);
 
-        self.niri.handle_focus_follows_mouse(&under);
+        if !pointer.is_grabbed() {
+            let prev_location = pointer.current_location();
+            self.niri.handle_focus_follows_mouse(prev_location, &under);
+        }
 
         self.niri.pointer_contents.clone_from(&under);
 
@@ -3958,6 +3971,15 @@ impl State {
         let tablet_seat = self.niri.seat.tablet_seat();
         let tool = tablet_seat.get_tool(&event.tool());
         if let Some(tool) = tool {
+            if !tool.is_grabbed() && self.niri.popup_grab.is_none() {
+                let prev_location = self.niri.tablet_cursor_location.unwrap_or_else(|| {
+                    // Do focus-follows-mouse when entering the tablet.
+                    let pointer = self.niri.seat.get_pointer().unwrap();
+                    pointer.current_location()
+                });
+                self.niri.handle_focus_follows_mouse(prev_location, &under);
+            }
+
             let time = event.time();
 
             let frame = tablet::tool::AxisFrame {
@@ -4173,6 +4195,15 @@ impl State {
 
             match event.state() {
                 ProximityState::In => {
+                    if !tool.is_grabbed() && self.niri.popup_grab.is_none() {
+                        let prev_location = self.niri.tablet_cursor_location.unwrap_or_else(|| {
+                            // Do focus-follows-mouse when entering the tablet.
+                            let pointer = self.niri.seat.get_pointer().unwrap();
+                            pointer.current_location()
+                        });
+                        self.niri.handle_focus_follows_mouse(prev_location, &under);
+                    }
+
                     let frame = tablet::tool::AxisFrame {
                         pressure: event.pressure_has_changed().then(|| event.pressure()),
                         distance: event.distance_has_changed().then(|| event.distance()),
@@ -5008,7 +5039,6 @@ fn is_bind_on_cooldown(bind: &Bind, cooldown_timers: &HashMap<Key, RegistrationT
 ///
 /// A bind whose press action is rate-limited by its cooldown is skipped entirely:
 /// No action runs, and no release action is recorded.
-#[allow(clippy::too_many_arguments)]
 fn should_intercept_key<'a>(
     suppressed_keys: &mut HashSet<Keycode>,
     pending_release_binds: &mut HashMap<Keycode, Bind>,
@@ -5103,7 +5133,7 @@ fn find_bind<'a, I: Iterator<Item = &'a Bind> + Clone>(
             let vt = (modified - KEY_XF86Switch_VT_1 + 1) as u8;
             Some(Action::ChangeVt(vt))
         }
-        KEY_XF86PowerOff if !disable_power_key_handling => Some(Action::Suspend),
+        KEY_XF86PowerOff if !disable_power_key_handling => Some(Action::PowerKeySuspend),
         _ => None,
     };
 
@@ -5366,6 +5396,7 @@ fn allowed_when_locked(action: &Action) -> bool {
         action,
         Action::ChangeVt(_)
             | Action::Suspend
+            | Action::PowerKeySuspend
             | Action::PowerOffMonitors
             | Action::PowerOnMonitors
             | Action::SwitchLayout(_)
@@ -5413,6 +5444,7 @@ fn allowed_during_screenshot(action: &Action) -> bool {
         Action::Quit(_)
             | Action::ChangeVt(_)
             | Action::Suspend
+            | Action::PowerKeySuspend
             | Action::PowerOffMonitors
             | Action::PowerOnMonitors
             | Action::ToggleTouchpad

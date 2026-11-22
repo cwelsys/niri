@@ -3996,7 +3996,6 @@ impl WindowHeight {
 }
 
 impl<W: LayoutElement> Column<W> {
-    #[allow(clippy::too_many_arguments)]
     fn new_with_tile(
         tile: Tile<W>,
         view_size: Size<f64, Logical>,
