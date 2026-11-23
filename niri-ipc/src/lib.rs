@@ -414,7 +414,16 @@ pub enum Action {
         index: u8,
     },
     /// Focus the previously focused window.
-    FocusWindowPrevious {},
+    FocusWindowPrevious {
+        /// Which windows to consider. Defaults to all windows.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        scope: Option<RecentWindowsScope>,
+        /// Additional filter for the considered windows.
+        #[cfg_attr(feature = "clap", arg(long))]
+        #[serde(default)]
+        filter: Option<RecentWindowsFilter>,
+    },
     /// Focus the column to the left.
     FocusColumnLeft {},
     /// Focus the column to the right.
@@ -676,6 +685,86 @@ pub enum Action {
         /// If `true` (the default) and the window to move is focused, the focus will follow the
         /// window to the new workspace. If `false`, the focus will remain on the original
         /// workspace.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        focus: bool,
+    },
+    /// Move the focused window to a new workspace below a workspace.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Move the focused window to a new workspace below the focused workspace")
+    )]
+    MoveWindowToNewWorkspaceBelow {
+        /// Reference (index or name) of the workspace below which to put the new window.
+        ///
+        /// If `None`, uses the focused workspace.
+        #[cfg_attr(feature = "clap", arg())]
+        reference: Option<WorkspaceReferenceArg>,
+
+        /// Whether the focus should follow the moved window.
+        ///
+        /// If `true` (the default), the focus will follow the window to the new workspace. If
+        /// `false`, the focus will remain on the original workspace.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        focus: bool,
+    },
+    /// Move the focused window to a new workspace above a workspace.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Move the focused window to a new workspace above the focused workspace")
+    )]
+    MoveWindowToNewWorkspaceAbove {
+        /// Reference (index or name) of the workspace above which to put the new window.
+        ///
+        /// If `None`, uses the focused workspace.
+        #[cfg_attr(feature = "clap", arg())]
+        reference: Option<WorkspaceReferenceArg>,
+
+        /// Whether the focus should follow the moved window.
+        ///
+        /// If `true` (the default), the focus will follow the window to the new workspace. If
+        /// `false`, the focus will remain on the original workspace.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        focus: bool,
+    },
+    /// Move the focused column to a new workspace below a workspace.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Move the focused column to a new workspace below the focused workspace")
+    )]
+    MoveColumnToNewWorkspaceBelow {
+        /// Reference (index or name) of the workspace below which to put the new column.
+        ///
+        /// If `None`, uses the focused workspace.
+        #[cfg_attr(feature = "clap", arg())]
+        reference: Option<WorkspaceReferenceArg>,
+
+        /// Whether the focus should follow the moved column.
+        ///
+        /// If `true` (the default), the focus will follow the column to the new workspace. If
+        /// `false`, the focus will remain on the original workspace.
+        #[serde(default = "default_true")]
+        #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
+        focus: bool,
+    },
+    /// Move the focused column to a new workspace above a workspace.
+    #[cfg_attr(
+        feature = "clap",
+        clap(about = "Move the focused column to a new workspace above the focused workspace")
+    )]
+    MoveColumnToNewWorkspaceAbove {
+        /// Reference (index or name) of the workspace above which to put the new column.
+        ///
+        /// If `None`, uses the focused workspace.
+        #[cfg_attr(feature = "clap", arg())]
+        reference: Option<WorkspaceReferenceArg>,
+
+        /// Whether the focus should follow the moved column.
+        ///
+        /// If `true` (the default), the focus will follow the column to the new workspace. If
+        /// `false`, the focus will remain on the original workspace.
         #[serde(default = "default_true")]
         #[cfg_attr(feature = "clap", arg(long, action = clap::ArgAction::Set, default_value_t = true))]
         focus: bool,
@@ -1432,6 +1521,30 @@ pub struct LogicalOutput {
     pub scale: f64,
     /// Transform.
     pub transform: Transform,
+}
+
+/// Which windows to consider when picking a recently focused window.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub enum RecentWindowsScope {
+    /// All windows.
+    All,
+    /// Windows on the active output.
+    Output,
+    /// Windows on the active workspace.
+    Workspace,
+}
+
+/// Additional filter for the windows considered when picking a recently focused window.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub enum RecentWindowsFilter {
+    /// All windows.
+    All,
+    /// Windows with the same app id as the focused window.
+    AppId,
 }
 
 /// Output transform, which goes counter-clockwise.
