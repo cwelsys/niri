@@ -3333,6 +3333,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         let end_pos = gesture.tracker.projected_end_pos() * norm_factor;
         let target_view_offset = end_pos + gesture.delta_from_tracker;
 
+        let active_col_x = self.column_x(self.active_column_idx);
+        let current_view_pos = active_col_x + current_view_offset;
+        let target_view_pos = active_col_x + target_view_offset;
+
         // Compute the snapping points. These are where the view aligns with column boundaries on
         // either side.
         struct Snap {
@@ -3378,6 +3382,17 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             let view_width = self.view_size.w;
             let gaps = self.options.layout.gaps;
 
+            // The first column's left snap and the last column's right snap, for restricting the
+            // view gesture from easily going past them (since that is generally annoying).
+            //
+            // The first column's left snap isn't actually guaranteed to be the *leftmost* snap.
+            // With weird enough left strut and perhaps a maximized small fixed-size window, you
+            // can make the second window's left snap be further to the left than the first
+            // window's. The same goes for the rightmost snap.
+            let mut leftmost_snap = None;
+            let mut rightmost_snap = None;
+            let last_col_idx = self.columns.len() - 1;
+
             let mut col_x = 0.;
             for (col_idx, col) in self.columns.iter().enumerate() {
                 let col_w = col.width();
@@ -3397,6 +3412,12 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                 if mode.is_fullscreen() {
                     let view_pos = col_x;
                     snapping_points.push(Snap { view_pos, col_idx });
+
+                    if col_idx == 0 {
+                        leftmost_snap = Some(view_pos);
+                    } else if col_idx == last_col_idx {
+                        rightmost_snap = Some(view_pos);
+                    }
                 } else {
                     // Logic from compute_new_view_offset.
                     let padding = if mode.is_maximized() {
@@ -3416,6 +3437,13 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                         col_idx,
                     });
 
+                    // Initialize our boundary snaps in case the overflowing check is true.
+                    if col_idx == 0 {
+                        leftmost_snap = Some(center);
+                    } else if col_idx == last_col_idx {
+                        rightmost_snap = Some(center);
+                    }
+
                     let is_overflowing = |adj_col_w: Option<f64>| {
                         center_on_overflow
                             && adj_col_w
@@ -3433,6 +3461,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                     if !is_overflowing(next_col_w) {
                         let view_pos = col_x - padding - left_strut;
                         snapping_points.push(Snap { view_pos, col_idx });
+
+                        if col_idx == 0 {
+                            leftmost_snap = Some(view_pos);
+                        }
                     }
 
                     let prev_col_w = col_idx
@@ -3441,18 +3473,37 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                     if !is_overflowing(prev_col_w) {
                         let view_pos = col_x + col_w + padding + right_strut - view_width;
                         snapping_points.push(Snap { view_pos, col_idx });
+
+                        if col_idx == last_col_idx {
+                            rightmost_snap = Some(view_pos);
+                        }
                     }
                 }
 
                 col_x += col_w + gaps;
+            }
+
+            // Prevent the gesture from easily snapping further than the first/last column,
+            // as this is generally undesired.
+            if let Some((mut left, mut right)) = Option::zip(leftmost_snap, rightmost_snap) {
+                // If the columns on a workspace total up to less than the workspace width,
+                // left will be > right. In this case, we still want to allow intermediate snaps.
+                if left > right {
+                    std::mem::swap(&mut left, &mut right);
+                }
+
+                // If the user intentionally released the gesture far enough, then allow snapping
+                // past the edge. That is convenient on ultrawides.
+                snapping_points.retain(|snap| {
+                    (current_view_pos < left || left <= snap.view_pos)
+                        && (right < current_view_pos || snap.view_pos <= right)
+                });
             }
         }
 
         // Find the closest snapping point.
         snapping_points.sort_by_key(|snap| NotNan::new(snap.view_pos).unwrap());
 
-        let active_col_x = self.column_x(self.active_column_idx);
-        let target_view_pos = active_col_x + target_view_offset;
         let target_snap = snapping_points
             .iter()
             .min_by_key(|snap| NotNan::new((snap.view_pos - target_view_pos).abs()).unwrap())
