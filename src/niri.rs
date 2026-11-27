@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, LazyCell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::os::unix::net::UnixStream;
@@ -201,11 +201,6 @@ use crate::window::mapped::{MappedId, WindowCastRenderElements};
 use crate::window::{InitialConfigureState, Mapped, ResolvedWindowRules, Unmapped, WindowRef};
 
 const CLEAR_COLOR_LOCKED: [f32; 4] = [0.3, 0.1, 0.1, 1.];
-
-// We'll try to send frame callbacks at least once a second. We'll make a timer that fires once a
-// second, so with the worst timing the maximum interval between two frame callbacks for a surface
-// should be ~1.995 seconds.
-const FRAME_CALLBACK_THROTTLE: Option<Duration> = Some(Duration::from_millis(995));
 
 /// How long to keep ignoring the power key after waking up.
 ///
@@ -2829,16 +2824,30 @@ impl Niri {
         #[cfg(feature = "dbus")]
         let a11y = A11y::new(event_loop.clone());
 
+        // This timer's purpose is not only to send frame callbacks to invisible surfaces,
+        // but also to generally wake up the event loop periodically. Which is a bit unfortunate
+        // from the power usage standpoint. Currently, at least these things rely on it:
+        //
+        // - Clear expired wlr-screencopy casts (they have a deadline but don't set their own
+        //   timer).
+        // - Refresh the FDO ScreenSaver inhibit value (it doesn't wake up the event loop when
+        //   changing it).
+        // - Advance layout animations and clean up workspaces even when outputs are not redrawing
+        //   (e.g. during power-off-monitors).
+        //
+        // Some of these would be fairly easy to fix, but the advance animations one sounds harder.
+        // And there isn't really a benefit to fixing these one by one instead of all at once (and
+        // completely stopping this timer).
+        //
+        // FIXME: fix all of these and keep this timer stopped in most cases.
         event_loop
             .insert_source(
                 Timer::from_duration(Duration::from_secs(1)),
                 |_, _, state| {
-                    // Ticking smithay's frame-throttle bookkeeping serves no purpose when
-                    // nothing is being presented. A screencast or screencopy counts.
-                    if state.niri.any_output_consumed() {
-                        state.niri.send_frame_callbacks_on_fallback_timer();
-                    }
-                    TimeoutAction::ToDuration(Duration::from_secs(1))
+                    let throttle_fps = state.niri.send_throttle_frame_callbacks();
+                    // Keep this timer running at least once a second.
+                    let secs = 1. / f64::max(throttle_fps, 1.);
+                    TimeoutAction::ToDuration(Duration::from_secs_f64(secs))
                 },
             )
             .unwrap();
@@ -4204,7 +4213,7 @@ impl Niri {
         }
     }
 
-    /// Whether anything will consume what we draw for this output.
+    /// Whether a screencast or screencopy will consume what we draw for this output.
     ///
     /// Screencasts and screencopy keep rendering with the CRTC torn down:
     /// `render_for_screen_cast()`, `render_windows_for_screen_cast()` and
@@ -4212,11 +4221,7 @@ impl Niri {
     /// of `redraw()`, outside the
     /// `monitors_active` check. Their clients still need frame callbacks, so gating on
     /// `monitors_active` alone freezes a cast when the screen blanks.
-    pub fn output_is_consumed(&self, output: &Output) -> bool {
-        if self.monitors_active {
-            return true;
-        }
-
+    pub fn output_is_captured(&self, output: &Output) -> bool {
         let pending_screencopy = self
             .screencopy_state
             .queues()
@@ -4259,102 +4264,6 @@ impl Niri {
         }
 
         false
-    }
-
-    /// Whether any output is being consumed.
-    ///
-    /// For the global frame-callback throttling timer, which is not per-output.
-    pub fn any_output_consumed(&self) -> bool {
-        self.monitors_active
-            || self
-                .global_space
-                .outputs()
-                .any(|output| self.output_is_consumed(output))
-    }
-
-    pub fn queue_estimated_vblank_timer(
-        &mut self,
-        output: Output,
-        target_presentation_time: Duration,
-    ) {
-        let output_state = self.output_state.get_mut(&output).unwrap();
-        match mem::take(&mut output_state.redraw_state) {
-            RedrawState::Idle => unreachable!(),
-            RedrawState::Queued => (),
-            RedrawState::WaitingForVBlank { .. } => unreachable!(),
-            RedrawState::WaitingForEstimatedVBlank(token)
-            | RedrawState::WaitingForEstimatedVBlankAndQueued(token) => {
-                output_state.redraw_state = RedrawState::WaitingForEstimatedVBlank(token);
-                return;
-            }
-        }
-
-        let now = get_monotonic_time();
-        let mut duration = target_presentation_time.saturating_sub(now);
-
-        // No use setting a zero timer, since we'll send frame callbacks anyway right after the
-        // call to render(). This can happen for example with unknown presentation time from DRM.
-        if duration.is_zero() {
-            duration += output_state
-                .frame_clock
-                .refresh_interval()
-                // Unknown refresh interval, i.e. winit backend. Would be good to estimate it
-                // somehow but it's not that important for this code path.
-                .unwrap_or(Duration::from_micros(16_667));
-        }
-
-        trace!("queueing estimated vblank timer to fire in {duration:?}");
-
-        let timer = Timer::from_duration(duration);
-        let token = self
-            .event_loop
-            .insert_source(timer, move |_, _, data| {
-                data.niri.on_estimated_vblank_timer(output.clone());
-                TimeoutAction::Drop
-            })
-            .unwrap();
-        output_state.redraw_state = RedrawState::WaitingForEstimatedVBlank(token);
-    }
-
-    fn on_estimated_vblank_timer(&mut self, output: Output) {
-        let span = tracy_client::span!("Niri::on_estimated_vblank_timer");
-
-        let name = output.name();
-        span.emit_text(&name);
-
-        let Some(output_state) = self.output_state.get_mut(&output) else {
-            error!("missing output state for {name}");
-            return;
-        };
-
-        // We waited for the timer, now we can send frame callbacks again.
-        output_state.frame_callback_sequence = output_state.frame_callback_sequence.wrapping_add(1);
-
-        match mem::replace(&mut output_state.redraw_state, RedrawState::Idle) {
-            RedrawState::WaitingForEstimatedVBlank(_) => (),
-            // The timer fired just in front of a redraw.
-            RedrawState::WaitingForEstimatedVBlankAndQueued(_) => {
-                output_state.redraw_state = RedrawState::Queued;
-                return;
-            }
-            // Unexpected states, but let's not crash the compositor.
-            // https://github.com/niri-wm/niri/issues/4781
-            state @ (RedrawState::Idle
-            | RedrawState::Queued
-            | RedrawState::WaitingForVBlank { .. }) => {
-                error!(
-                    "unexpected redraw state for output {name} \
-                    (should be WaitingForEstimatedVBlank or WaitingForEstimatedVBlankAndQueued): \
-                    {state:?}"
-                );
-            }
-        }
-
-        if output_state.unfinished_animations_remain {
-            self.queue_redraw(&output);
-        } else {
-            self.send_frame_callbacks(&output);
-        }
     }
 
     pub fn render_pointer<R: NiriRenderer>(
@@ -4720,6 +4629,8 @@ impl Niri {
 
         self.idle_inhibiting_surfaces.retain(|s| s.is_alive());
 
+        // The FDO ScreenSaver doesn't currently wake up the event loop when changing its atomic
+        // value, so this relies on the frame callback 1 second timer waking up regularly.
         let is_inhibited = self.is_fdo_idle_inhibited.load(Ordering::SeqCst)
             || self.idle_inhibiting_surfaces.iter().any(|surface| {
                 with_states(surface, |states| {
@@ -5383,10 +5294,13 @@ impl Niri {
         // Freeze the clock at the target time.
         self.clock.set_unadjusted(target_presentation_time);
 
+        // Update render elements unconditionally as they may be used to draw screencasts later.
         self.update_render_elements(Some(output));
 
+        let monitors_active = self.monitors_active && backend.is_active();
+
         let mut res = RenderResult::Skipped;
-        if self.monitors_active {
+        if monitors_active {
             let state = self.output_state.get_mut(output).unwrap();
             state.unfinished_animations_remain = self.layout.are_animations_ongoing(Some(output));
             state.unfinished_animations_remain |=
@@ -5412,18 +5326,18 @@ impl Niri {
             // Render.
             res = backend.render(self, output, target_presentation_time);
         } else {
-            // Clear unfinished_animations_remain so the estimated-vblank timer doesn't keep
-            // re-queuing redraws at refresh-rate cadence while monitors are off. Recomputed when
-            // monitors come back active.
-            self.output_state
-                .get_mut(output)
-                .unwrap()
-                .unfinished_animations_remain = false;
+            // Keep estimated VBlank timer from queueing unnecessary redraws during animations.
+            let state = self.output_state.get_mut(output).unwrap();
+            state.unfinished_animations_remain = false;
+        }
 
-            // With monitors off, reuse the throttle Tty::render schedules on NoDamage, so
-            // commit-driven queue_redraw doesn't busy-loop the redraw path.
+        // If we didn't submit, queue the estimated timer to fire at the predicted time.
+        // It will send frame callbacks if any surfaces wanted them.
+        if res != RenderResult::Submitted {
             self.queue_estimated_vblank_timer(output.clone(), target_presentation_time);
         }
+
+        let captured = self.output_is_captured(output);
 
         // We import every dmabuf when the client creates a wl_buffer from it, just to check that
         // we can, and the renderer caches that import until a render pass retires it. No render
@@ -5434,7 +5348,7 @@ impl Niri {
         // retires the dead entries while keeping what the next capture frame needs. It is also a
         // no-op after a render that failed to queue, which already cleaned up.
         if res == RenderResult::Skipped {
-            if self.output_is_consumed(output) {
+            if self.monitors_active || captured {
                 backend.cleanup_texture_cache();
             } else {
                 backend.invalidate_caches();
@@ -5456,9 +5370,13 @@ impl Niri {
             };
         }
 
-        // Update the lock render state on successful render, or if monitors are inactive. When
-        // monitors are inactive on a TTY, they have no framebuffer attached, so no sensitive data
-        // from a last render will be visible.
+        // Update the lock render state on successful render, or if monitors are inactive.
+        //
+        // When monitors are inactive on a TTY, they have no framebuffer attached,
+        // so no sensitive data from a last render will be visible.
+        //
+        // When the TTY is inactive, we don't know what the framebuffer state is. It might very well
+        // remain drawing the old frame, meaning we can't signal the lock yet.
         if res != RenderResult::Skipped || !self.monitors_active {
             state.lock_render_state = if is_locked {
                 LockRenderState::Locked
@@ -5468,12 +5386,9 @@ impl Niri {
         }
 
         // If we're in process of locking the session, check if the requirements were met.
-        match mem::take(&mut self.lock_state) {
-            LockState::Locking(confirmation) => {
-                if state.lock_render_state == LockRenderState::Unlocked {
-                    // We needed to render a locked frame on this output but failed.
-                    self.unlock();
-                } else {
+        if state.lock_render_state == LockRenderState::Locked {
+            match mem::take(&mut self.lock_state) {
+                LockState::Locking(confirmation) => {
                     // Check if all outputs are now locked.
                     let all_locked = self
                         .output_state
@@ -5490,8 +5405,8 @@ impl Niri {
                         self.lock_state = LockState::Locking(confirmation);
                     }
                 }
+                lock_state => self.lock_state = lock_state,
             }
-            lock_state => self.lock_state = lock_state,
         }
 
         self.refresh_on_demand_vrr(backend, output);
@@ -5511,9 +5426,7 @@ impl Niri {
         // Skip frame callbacks when nothing will consume this output: inviting clients to commit
         // just queues buffers that go nowhere. Screencasts and screencopy count as consumers, so
         // their clients keep drawing with the monitors off.
-        if self.output_is_consumed(output) {
-            self.send_frame_callbacks(output);
-        }
+        self.send_frame_callbacks(output, monitors_active || captured);
         backend.with_primary_renderer(|renderer| {
             #[cfg(feature = "xdp-gnome-screencast")]
             {
@@ -5532,6 +5445,90 @@ impl Niri {
             self.render_windows_for_image_copy_capture(renderer, output, target_presentation_time);
             self.render_for_image_copy_cursor_capture(renderer, output, target_presentation_time);
         });
+    }
+
+    fn queue_estimated_vblank_timer(&mut self, output: Output, target_presentation_time: Duration) {
+        let output_state = self.output_state.get_mut(&output).unwrap();
+        match mem::take(&mut output_state.redraw_state) {
+            RedrawState::Idle => unreachable!(),
+            RedrawState::Queued => (),
+            RedrawState::WaitingForVBlank { .. } => unreachable!(),
+            RedrawState::WaitingForEstimatedVBlank(token)
+            | RedrawState::WaitingForEstimatedVBlankAndQueued(token) => {
+                output_state.redraw_state = RedrawState::WaitingForEstimatedVBlank(token);
+                return;
+            }
+        }
+
+        let now = get_monotonic_time();
+        let mut duration = target_presentation_time.saturating_sub(now);
+
+        // No use setting a zero timer, since we'll send frame callbacks anyway right after the call
+        // to render(). This can happen for example with unknown presentation time from DRM.
+        if duration.is_zero() {
+            duration += output_state
+                .frame_clock
+                .refresh_interval()
+                // Unknown refresh interval, i.e. winit backend. Would be good to estimate it
+                // somehow but it's not that important for this code path.
+                .unwrap_or(Duration::from_micros(16_667));
+        }
+
+        trace!("queueing estimated vblank timer to fire in {duration:?}");
+
+        let timer = Timer::from_duration(duration);
+        let token = self
+            .event_loop
+            .insert_source(timer, move |_, _, data| {
+                data.niri
+                    .on_estimated_vblank_timer(&data.backend, output.clone());
+                TimeoutAction::Drop
+            })
+            .unwrap();
+        output_state.redraw_state = RedrawState::WaitingForEstimatedVBlank(token);
+    }
+
+    fn on_estimated_vblank_timer(&mut self, backend: &Backend, output: Output) {
+        let span = tracy_client::span!("Niri::on_estimated_vblank_timer");
+
+        let name = output.name();
+        span.emit_text(&name);
+
+        let Some(output_state) = self.output_state.get_mut(&output) else {
+            error!("missing output state for {name}");
+            return;
+        };
+
+        // We waited for the timer, now we can send frame callbacks again.
+        output_state.frame_callback_sequence = output_state.frame_callback_sequence.wrapping_add(1);
+
+        match mem::replace(&mut output_state.redraw_state, RedrawState::Idle) {
+            RedrawState::WaitingForEstimatedVBlank(_) => (),
+            // The timer fired just in front of a redraw.
+            RedrawState::WaitingForEstimatedVBlankAndQueued(_) => {
+                output_state.redraw_state = RedrawState::Queued;
+                return;
+            }
+            // Unexpected states, but let's not crash the compositor.
+            // https://github.com/niri-wm/niri/issues/4781
+            state @ (RedrawState::Idle
+            | RedrawState::Queued
+            | RedrawState::WaitingForVBlank { .. }) => {
+                error!(
+                    "unexpected redraw state for output {name} \
+                    (should be WaitingForEstimatedVBlank or WaitingForEstimatedVBlankAndQueued): \
+                    {state:?}"
+                );
+            }
+        }
+
+        if output_state.unfinished_animations_remain {
+            self.queue_redraw(&output);
+        } else {
+            let consumed =
+                (self.monitors_active && backend.is_active()) || self.output_is_captured(&output);
+            self.send_frame_callbacks(&output, consumed);
+        }
     }
 
     pub fn refresh_on_demand_vrr(&mut self, backend: &mut Backend, output: &Output) {
@@ -5893,11 +5890,7 @@ impl Niri {
         }
     }
 
-    pub fn send_frame_callbacks(&mut self, output: &Output) {
-        if !self.monitors_active {
-            return;
-        }
-
+    pub fn send_frame_callbacks(&mut self, output: &Output, monitors_active: bool) {
         let _span = tracy_client::span!("Niri::send_frame_callbacks");
 
         let state = self.output_state.get(output).unwrap();
@@ -5960,77 +5953,95 @@ impl Niri {
         for mapped in self.layout.windows_for_output_mut(output) {
             if mapped.is_window_cast_target() {
                 ignore_primary_output.set(true);
+            } else if !monitors_active {
+                // Don't normally send frame callbacks to windows when monitors are powered off.
+                continue;
             }
 
-            mapped.send_frame(
-                output,
-                frame_callback_time,
-                FRAME_CALLBACK_THROTTLE,
-                should_send,
-            );
+            mapped.send_frame(output, frame_callback_time, None, should_send);
 
             ignore_primary_output.set(false);
         }
 
+        // Everything else is never force-redrawn.
+        if !monitors_active {
+            return;
+        }
+
         for surface in layer_map_for_output(output).layers() {
-            surface.send_frame(
-                output,
-                frame_callback_time,
-                FRAME_CALLBACK_THROTTLE,
-                should_send,
-            );
+            surface.send_frame(output, frame_callback_time, None, should_send);
         }
 
         if let Some(surface) = &self.output_state[output].lock_surface {
             let surface = surface.wl_surface();
 
-            send_frames_surface_tree(
-                surface,
-                output,
-                frame_callback_time,
-                FRAME_CALLBACK_THROTTLE,
-                should_send,
-            );
+            send_frames_surface_tree(surface, output, frame_callback_time, None, should_send);
 
             for (popup, _) in PopupManager::popups_for_surface(surface) {
                 let surface = popup.wl_surface();
-                send_frames_surface_tree(
-                    surface,
-                    output,
-                    frame_callback_time,
-                    FRAME_CALLBACK_THROTTLE,
-                    should_send,
-                );
+                send_frames_surface_tree(surface, output, frame_callback_time, None, should_send);
             }
         }
 
         if let Some(surface) = self.dnd_icon.as_ref().map(|icon| &icon.surface) {
-            send_frames_surface_tree(
-                surface,
-                output,
-                frame_callback_time,
-                FRAME_CALLBACK_THROTTLE,
-                should_send,
-            );
+            send_frames_surface_tree(surface, output, frame_callback_time, None, should_send);
         }
 
         if let CursorImageStatus::Surface(surface) = self.cursor_manager.cursor_image() {
-            send_frames_surface_tree(
-                surface,
-                output,
-                frame_callback_time,
-                FRAME_CALLBACK_THROTTLE,
-                should_send,
-            );
+            send_frames_surface_tree(surface, output, frame_callback_time, None, should_send);
         }
     }
 
-    pub fn send_frame_callbacks_on_fallback_timer(&mut self) {
-        if !self.monitors_active || self.output_state.is_empty() {
-            return;
-        }
+    pub fn send_throttle_frame_callbacks(&mut self) -> f64 {
+        let _span = tracy_client::span!("Niri::send_throttle_frame_callbacks");
 
-        let _span = tracy_client::span!("Niri::send_frame_callbacks_on_fallback_timer");
+        // Make up a bogus output; we don't care about it here anyway, just the throttling timer.
+        let output = LazyCell::new(|| {
+            Output::new(
+                String::new(),
+                PhysicalProperties {
+                    size: Size::from((0, 0)),
+                    subpixel: Subpixel::Unknown,
+                    make: String::new(),
+                    model: String::new(),
+                    serial_number: String::new(),
+                },
+            )
+        });
+
+        let frame_callback_time = get_monotonic_time();
+
+        // Find the highest throttle FPS requested by any throttled window.
+        //
+        // This does mean that an unlucky combination of values can result in one of the windows
+        // getting throttled up to 2× slower, but that's not a big deal.
+        let mut throttle_fps = 0.;
+
+        self.layout.with_windows_mut(|mapped, _| {
+            // Don't check if the window is actually invisible for simplicity, also so that the
+            // window doesn't drop to 1 FPS every time it's made visible and then invisible again,
+            // due to waiting for the slowed-down throttle timer.
+            let fps = mapped.rules().offscreen_fps;
+            if fps > 0. {
+                throttle_fps = f64::max(throttle_fps, fps);
+
+                let secs = 1. / f64::max(fps, 0.001);
+                // Subtract 1 ms to reduce the chance of timer aliasing.
+                let secs = secs - 0.001;
+                mapped.send_frame(
+                    &output,
+                    frame_callback_time,
+                    Some(Duration::from_secs_f64(secs)),
+                    |_, _| None,
+                );
+            }
+        });
+
+        throttle_fps
+    }
+
+    pub fn force_send_frame_callbacks(&mut self) {
+        let _span = tracy_client::span!("Niri::force_send_frame_callbacks");
 
         // Make up a bogus output; we don't care about it here anyway, just the throttling timer.
         let output = Output::new(
@@ -6043,72 +6054,17 @@ impl Niri {
                 serial_number: String::new(),
             },
         );
-        let output = &output;
 
         let frame_callback_time = get_monotonic_time();
 
         self.layout.with_windows_mut(|mapped, _| {
             mapped.send_frame(
-                output,
+                &output,
                 frame_callback_time,
-                FRAME_CALLBACK_THROTTLE,
+                Some(Duration::ZERO),
                 |_, _| None,
             );
         });
-
-        for (output, state) in self.output_state.iter() {
-            for surface in layer_map_for_output(output).layers() {
-                surface.send_frame(
-                    output,
-                    frame_callback_time,
-                    FRAME_CALLBACK_THROTTLE,
-                    |_, _| None,
-                );
-            }
-
-            if let Some(surface) = &state.lock_surface {
-                let surface = surface.wl_surface();
-
-                send_frames_surface_tree(
-                    surface,
-                    output,
-                    frame_callback_time,
-                    FRAME_CALLBACK_THROTTLE,
-                    |_, _| None,
-                );
-
-                for (popup, _) in PopupManager::popups_for_surface(surface) {
-                    let surface = popup.wl_surface();
-                    send_frames_surface_tree(
-                        surface,
-                        output,
-                        frame_callback_time,
-                        FRAME_CALLBACK_THROTTLE,
-                        |_, _| None,
-                    );
-                }
-            }
-        }
-
-        if let Some(surface) = &self.dnd_icon.as_ref().map(|icon| &icon.surface) {
-            send_frames_surface_tree(
-                surface,
-                output,
-                frame_callback_time,
-                FRAME_CALLBACK_THROTTLE,
-                |_, _| None,
-            );
-        }
-
-        if let CursorImageStatus::Surface(surface) = self.cursor_manager.cursor_image() {
-            send_frames_surface_tree(
-                surface,
-                output,
-                frame_callback_time,
-                FRAME_CALLBACK_THROTTLE,
-                |_, _| None,
-            );
-        }
     }
 
     pub fn take_presentation_feedbacks(
@@ -7329,11 +7285,25 @@ impl Niri {
 
     pub fn lock(&mut self, confirmation: SessionLocker) {
         // Check if another client is in the process of locking.
-        if matches!(
-            self.lock_state,
-            LockState::WaitingForSurfaces { .. } | LockState::Locking(_)
-        ) {
+        if matches!(self.lock_state, LockState::WaitingForSurfaces { .. }) {
+            // If the client is dead, this will refuse a new one, but that's fine since this state
+            // can only persist for the 1 second deadline.
             info!("refusing lock as another client is currently locking");
+            return;
+        }
+
+        // We might get stuck in Locking(_) for a while when the TTY is inactive.
+        if let LockState::Locking(cur_conf) = &self.lock_state {
+            if cur_conf.ext_session_lock().is_alive() {
+                info!("refusing lock as another client is currently locking");
+                return;
+            }
+
+            // If the client had died, continue with the new lock.
+            info!("locking session (replacing existing dead lock)");
+
+            // The screens have not been blanked yet, go to Locking.
+            self.lock_state = LockState::Locking(confirmation);
             return;
         }
 

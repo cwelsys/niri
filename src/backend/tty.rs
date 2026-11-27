@@ -1841,7 +1841,8 @@ impl Tty {
 
             niri.queue_redraw(&output);
         } else {
-            niri.send_frame_callbacks(&output);
+            let monitors_active = niri.monitors_active && self.is_active();
+            niri.send_frame_callbacks(&output, monitors_active);
         }
     }
 
@@ -1912,6 +1913,10 @@ impl Tty {
         };
 
         span.emit_text(&surface.name.connector);
+
+        // We'll put it back after successfully submitting a frame.
+        // Otherwise, we won't be expecting a VBlank.
+        let vblank_frame = surface.vblank_frame.take();
 
         if !device.drm.is_active() {
             // This branch hits any time we try to render while the user had switched to a
@@ -2028,10 +2033,21 @@ impl Tty {
                             output_state.frame_callback_sequence =
                                 output_state.frame_callback_sequence.wrapping_add(1);
 
+                            // Put the Tracy frame back since we are expecting a VBlank.
+                            surface.vblank_frame = vblank_frame;
+
                             return RenderResult::Submitted;
                         }
                         Err(err) => {
                             warn!("error queueing frame: {err}");
+
+                            // This error can happen when we're trying to lock the session while on
+                            // another TTY, switch to this TTY, then try to draw the first red
+                            // background frame, and it fails to queue. In this case, the
+                            // framebuffer is not cleared, and we must attempt to queue the frame
+                            // again. Reset the buffer ages, so that the damage tracker doesn't
+                            // prevent us from submitting the same red frame.
+                            drm_compositor.reset_buffer_ages();
                         }
                     }
                 } else {
@@ -2043,12 +2059,6 @@ impl Tty {
                 warn!("error rendering frame: {err}");
             }
         }
-
-        // We're not expecting a vblank right after this.
-        drop(surface.vblank_frame.take());
-
-        // Queue a timer to fire at the predicted vblank time.
-        niri.queue_estimated_vblank_timer(output.clone(), target_presentation_time);
 
         rv
     }
@@ -2309,6 +2319,10 @@ impl Tty {
                 }
             }
         }
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.session.is_active()
     }
 
     pub fn set_output_on_demand_vrr(&mut self, niri: &mut Niri, output: &Output, enable_vrr: bool) {

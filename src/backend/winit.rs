@@ -25,7 +25,7 @@ use smithay::wayland::dmabuf::{DmabufFeedbackBuilder, DmabufGlobal};
 use smithay::wayland::presentation::Refresh;
 
 use super::{IpcOutputMap, OutputId, RenderResult};
-use crate::niri::{Niri, RedrawState, State};
+use crate::niri::{Niri, OutputRenderElements, RedrawState, State};
 use crate::render_helpers::debug::draw_damage;
 use crate::render_helpers::{resources, shaders, RenderCtx, RenderTarget};
 use crate::utils::{get_monotonic_time, logical_output, WinitScale};
@@ -163,7 +163,16 @@ impl Winit {
                     }
                 }
                 WinitEvent::Focus(true) => (),
-                WinitEvent::Redraw => state.niri.queue_redraw(&state.backend.winit().output),
+                WinitEvent::Redraw => {
+                    state.niri.queue_redraw(&state.backend.winit().output);
+
+                    // See if we need to submit a frame with the new size if the rendering
+                    // is otherwise paused,to keep the niri window from looking broken when resizing
+                    // while the monitors are "powered off".
+                    if !state.niri.monitors_active {
+                        state.backend.set_monitors_active(false);
+                    }
+                }
                 WinitEvent::CloseRequested => state.niri.stop_signal.stop(),
             })
             .unwrap();
@@ -350,7 +359,6 @@ impl Winit {
 
         niri.update_primary_scanout_output(output, &res.states);
 
-        let rv;
         if let Some(damage) = res.damage {
             if self
                 .config
@@ -374,34 +382,62 @@ impl Winit {
                 wp_presentation_feedback::Kind::empty(),
             );
 
-            rv = RenderResult::Submitted;
+            let output_state = niri.output_state.get_mut(output).unwrap();
+            match mem::replace(&mut output_state.redraw_state, RedrawState::Idle) {
+                RedrawState::Idle => unreachable!(),
+                RedrawState::Queued => (),
+                RedrawState::WaitingForVBlank { .. } => unreachable!(),
+                RedrawState::WaitingForEstimatedVBlank(_) => unreachable!(),
+                RedrawState::WaitingForEstimatedVBlankAndQueued(token) => {
+                    niri.event_loop.remove(token);
+                }
+            }
+
+            output_state.frame_callback_sequence =
+                output_state.frame_callback_sequence.wrapping_add(1);
+
+            // FIXME: this should wait until a frame callback from the host compositor, but it
+            // redraws right away instead.
+            if output_state.unfinished_animations_remain {
+                self.backend.window().request_redraw();
+            }
+
+            RenderResult::Submitted
         } else {
-            rv = RenderResult::NoDamage;
+            RenderResult::NoDamage
         }
-
-        let output_state = niri.output_state.get_mut(output).unwrap();
-        match mem::replace(&mut output_state.redraw_state, RedrawState::Idle) {
-            RedrawState::Idle => unreachable!(),
-            RedrawState::Queued => (),
-            RedrawState::WaitingForVBlank { .. } => unreachable!(),
-            RedrawState::WaitingForEstimatedVBlank(_) => unreachable!(),
-            RedrawState::WaitingForEstimatedVBlankAndQueued(_) => unreachable!(),
-        }
-
-        output_state.frame_callback_sequence = output_state.frame_callback_sequence.wrapping_add(1);
-
-        // FIXME: this should wait until a frame callback from the host compositor, but it redraws
-        // right away instead.
-        if output_state.unfinished_animations_remain {
-            self.backend.window().request_redraw();
-        }
-
-        rv
     }
 
     pub fn toggle_debug_tint(&mut self) {
         let renderer = self.backend.renderer();
         renderer.set_debug_flags(renderer.debug_flags() ^ DebugFlags::TINT);
+    }
+
+    pub fn set_monitors_active(&mut self, active: bool) {
+        if active {
+            // Nothing special needed.
+            return;
+        }
+
+        // Simulate monitors powering off by cleaing the display to black.
+        let res = {
+            let (renderer, mut framebuffer) = self.backend.bind().unwrap();
+            self.damage_tracker
+                .render_output::<OutputRenderElements<_>, _>(
+                    renderer,
+                    &mut framebuffer,
+                    0,
+                    &[],
+                    [0.; 4],
+                )
+                .unwrap()
+        };
+
+        if let Some(damage) = res.damage {
+            if let Err(err) = self.backend.submit(Some(damage)) {
+                warn!("error submitting cleared frame: {err:?}");
+            }
+        }
     }
 
     pub fn import_dmabuf(&mut self, dmabuf: &Dmabuf) -> bool {

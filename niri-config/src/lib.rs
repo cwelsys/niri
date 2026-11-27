@@ -2440,6 +2440,7 @@ window-rule {
                         ),
                     ),
                     tiled_state: None,
+                    offscreen_fps: None,
                     background_effect: BackgroundEffectRule {
                         xray: None,
                         blur: None,
